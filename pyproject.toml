@@ -8,6 +8,7 @@ dependencies = [
     "taichi>=1.7.4",
     "numpy>=1.24",
     "scipy>=1.10",
+    "SimpleITK>=2.3",
 ]
 
 [dependency-groups]

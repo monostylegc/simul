@@ -57,7 +57,57 @@ ke = float(self._velocity_verlet_step2(self.dt))
 _sync()  # GPU 동기화
 ```
 
-#### 2.3 점성 감쇠 추가
+#### 2.3 3D 지원 검증 (2025-02)
+**추가된 파일:**
+- `tests/test_3d.py` - 11개 3D 테스트
+- `examples/cube_3d.py` - 3D 큐브 압축 예제
+
+**테스트 항목:**
+```
+Test3DGridInitialization (2개)
+- test_3d_grid_creation: 3D 격자 생성
+- test_3d_particle_volume: 입자 부피 계산
+
+Test3DNeighborSearch (2개)
+- test_3d_neighbor_count: 직접 이웃 (6개)
+- test_3d_diagonal_neighbors: 대각선 포함 (18개)
+
+Test3DBondSystem (2개)
+- test_3d_bond_creation: 본드 생성
+- test_3d_bond_vectors: 본드 벡터 길이
+
+Test3DNOSBShapeTensor (3개)
+- test_3d_shape_tensor_symmetry: K 대칭성
+- test_3d_shape_tensor_positive_definite: K 양정치
+- test_3d_deformation_gradient_identity: F=I (무변형)
+
+Test3DQuasiStaticCompression (2개)
+- test_3d_compression_displacement: 압축 변위 방향
+- test_3d_solver_stability: 솔버 안정성
+```
+
+#### 2.4 QuasiStaticSolver 안정성 개선 (2025-02)
+**파일:** `solver/quasi_static.py`
+
+**개선 내용:**
+1. 가속도/속도 초기화 함수 추가
+2. Viscous damping 파라미터 추가 (기본값 0.1)
+3. NaN/Inf 보호 로직 추가
+4. 더 보수적인 시간 간격 추정
+
+**수정된 생성자:**
+```python
+def __init__(
+    self,
+    particles: "ParticleSystem",
+    bonds: "BondSystem",
+    micromodulus: float,
+    dt: float = None,
+    damping: float = 0.1  # 새로 추가
+):
+```
+
+#### 2.5 점성 감쇠 추가
 **파일:** `solver/nosb_solver.py`
 
 운동 감쇠만으로는 큰 진폭 진동을 효과적으로 억제하지 못함. 점성 감쇠 추가:
@@ -82,7 +132,9 @@ def _velocity_verlet_step2(self, dt):
 
 #### 3.1 단위 테스트
 ```
-11 passed in 3.32s
+22 passed in 5.38s
+
+test_particles.py (11개):
 - test_initialization
 - test_grid_initialization
 - test_fixed_particles
@@ -94,6 +146,19 @@ def _velocity_verlet_step2(self, dt):
 - test_bone_critical_stretch
 - test_stable_dt_estimation
 - test_energy_conservation
+
+test_3d.py (11개):  # 새로 추가 (2025-02)
+- test_3d_grid_creation
+- test_3d_particle_volume
+- test_3d_neighbor_count
+- test_3d_diagonal_neighbors
+- test_3d_bond_creation
+- test_3d_bond_vectors
+- test_3d_shape_tensor_symmetry
+- test_3d_shape_tensor_positive_definite
+- test_3d_deformation_gradient_identity
+- test_3d_compression_displacement
+- test_3d_solver_stability
 ```
 
 #### 3.2 NOSB-PD 준정적 수렴 테스트
@@ -156,9 +221,9 @@ solver = NOSBSolver(
 - [ ] 힘 상태 재정의
 
 ### 3. 3D 확장 (우선순위: 중간)
-- [ ] 3D Shape tensor 계산
-- [ ] 3D 이웃 탐색 최적화
-- [ ] 3D 검증 테스트
+- [x] 3D Shape tensor 계산 ✅ (2025-02)
+- [x] 3D 이웃 탐색 최적화 ✅ (2025-02)
+- [x] 3D 검증 테스트 ✅ (2025-02)
 
 ### 4. FEMcy 메쉬 연동 (우선순위: 낮음)
 - [ ] `io/mesh_converter.py` 구현

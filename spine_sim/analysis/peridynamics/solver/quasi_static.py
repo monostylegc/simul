@@ -31,7 +31,8 @@ class QuasiStaticSolver:
         particles: "ParticleSystem",
         bonds: "BondSystem",
         micromodulus: float,
-        dt: float = None
+        dt: float = None,
+        damping: float = 0.1
     ):
         """Initialize quasi-static solver.
 
@@ -40,11 +41,13 @@ class QuasiStaticSolver:
             bonds: BondSystem instance
             micromodulus: Material micromodulus constant c
             dt: Time step (auto-computed if None)
+            damping: Viscous damping coefficient (0~1)
         """
         self.particles = particles
         self.bonds = bonds
         self.dim = particles.dim
         self.n_particles = particles.n_particles
+        self.damping = damping
 
         # Store micromodulus
         self.c = ti.field(dtype=ti.f32, shape=())
@@ -62,6 +65,9 @@ class QuasiStaticSolver:
         # Iteration counter
         self.iteration = 0
 
+        # 가속도 초기화
+        self._init_acceleration()
+
     def _estimate_stable_dt(self) -> float:
         """Estimate stable time step based on CFL condition."""
         # Get average volume and mass
@@ -70,6 +76,7 @@ class QuasiStaticSolver:
 
         avg_vol = np.mean(vol)
         avg_mass = np.mean(mass)
+        avg_rho = np.mean(self.particles.density.to_numpy())
 
         # Estimate spacing from volume
         if self.dim == 2:
@@ -77,17 +84,37 @@ class QuasiStaticSolver:
         else:
             spacing = np.power(avg_vol, 1.0/3.0)
 
-        # Approximate wave speed from micromodulus
-        # c ~ 9E / (pi * h * delta^3) for 2D
-        # Wave speed ~ sqrt(E/rho) ~ sqrt(c * delta^3 * pi * h / (9 * rho))
-        # Simplified: dt ~ safety * sqrt(m / (c * V))
+        # 이웃 수에서 horizon 추정
+        n_neighbors = self.bonds.n_neighbors.to_numpy()
+        avg_neighbors = np.mean(n_neighbors)
+
+        # 3D에서 이웃 수 ~ 4/3 * pi * (delta/spacing)^3
+        # delta/spacing ~ (3 * avg_neighbors / (4 * pi))^(1/3)
+        if self.dim == 3:
+            delta_ratio = np.power(3 * avg_neighbors / (4 * np.pi), 1.0/3.0)
+        else:
+            delta_ratio = np.sqrt(avg_neighbors / np.pi)
+        horizon = delta_ratio * spacing
+
+        # CFL 조건: dt < spacing / c_wave
+        # c_wave ~ sqrt(c * horizon^4 / rho) for bond-based PD
         c = float(self.c[None])
-        dt = 0.1 * np.sqrt(avg_mass / (c * avg_vol + 1e-20))
+
+        # 더 보수적인 시간 간격
+        c_wave = np.sqrt(c * horizon * avg_vol / avg_rho + 1e-20)
+        dt = 0.01 * spacing / c_wave  # safety factor 0.01
 
         # Limit to reasonable range
-        dt = max(1e-12, min(dt, 1e-4))
+        dt = max(1e-12, min(dt, 1e-6))
 
         return dt
+
+    @ti.kernel
+    def _init_acceleration(self):
+        """가속도를 0으로 초기화."""
+        for i in range(self.n_particles):
+            self.particles.a[i] = ti.Vector.zero(ti.f32, self.dim)
+            self.particles.v[i] = ti.Vector.zero(ti.f32, self.dim)
 
     @ti.kernel
     def _compute_bond_forces(self):
@@ -121,20 +148,43 @@ class QuasiStaticSolver:
         for i in range(self.n_particles):
             if self.particles.fixed[i] == 0:
                 # x(t+dt) = x(t) + v(t)*dt + 0.5*a(t)*dt^2
-                self.particles.x[i] += self.particles.v[i] * dt + \
-                    0.5 * self.particles.a[i] * dt * dt
+                dx = self.particles.v[i] * dt + 0.5 * self.particles.a[i] * dt * dt
+
+                # NaN 보호
+                valid = True
+                for d in ti.static(range(self.dim)):
+                    if ti.math.isnan(dx[d]) or ti.math.isinf(dx[d]):
+                        valid = False
+
+                if valid:
+                    self.particles.x[i] += dx
 
     @ti.kernel
-    def _velocity_verlet_step2(self, dt: ti.f32) -> ti.f32:
-        """Velocity Verlet step 2: update velocities. Returns kinetic energy."""
+    def _velocity_verlet_step2(self, dt: ti.f32, damping: ti.f32) -> ti.f32:
+        """Velocity Verlet step 2: update velocities with damping. Returns kinetic energy."""
         ke = 0.0
         for i in range(self.n_particles):
             if self.particles.fixed[i] == 0 and self.particles.mass[i] > 1e-20:
                 # a(t+dt) = f(t+dt) / m
                 a_new = self.particles.f[i] / self.particles.mass[i]
 
+                # NaN 보호
+                for d in ti.static(range(self.dim)):
+                    if ti.math.isnan(a_new[d]) or ti.abs(a_new[d]) > 1e15:
+                        a_new[d] = 0.0
+
                 # v(t+dt) = v(t) + 0.5*(a(t) + a(t+dt))*dt
-                self.particles.v[i] += 0.5 * (self.particles.a[i] + a_new) * dt
+                v_new = self.particles.v[i] + 0.5 * (self.particles.a[i] + a_new) * dt
+
+                # Viscous damping 적용
+                v_new = v_new * (1.0 - damping)
+
+                # NaN 보호
+                for d in ti.static(range(self.dim)):
+                    if ti.math.isnan(v_new[d]) or ti.abs(v_new[d]) > 1e10:
+                        v_new[d] = 0.0
+
+                self.particles.v[i] = v_new
 
                 # Store new acceleration
                 self.particles.a[i] = a_new
@@ -193,8 +243,8 @@ class QuasiStaticSolver:
         if external_force_func is not None:
             external_force_func()
 
-        # Velocity update (Verlet step 2)
-        ke = float(self._velocity_verlet_step2(self.dt))
+        # Velocity update (Verlet step 2) with damping
+        ke = float(self._velocity_verlet_step2(self.dt, self.damping))
 
         # Kinetic damping: reset velocities when KE peaks
         velocity_reset = False
@@ -237,7 +287,7 @@ class QuasiStaticSolver:
             Convergence info dictionary
         """
         # Reset state
-        self._reset_velocities()
+        self._init_acceleration()
         self.iteration = 0
         self.prev_ke = 0.0
         self.ke_increasing = True

@@ -2,8 +2,13 @@
 
 import taichi as ti
 import numpy as np
-from typing import Tuple, Optional
+from typing import Dict, Tuple, Optional, TYPE_CHECKING, Union
+from pathlib import Path
 from dataclasses import dataclass
+
+if TYPE_CHECKING:
+    from .marching_cubes import MarchingCubes
+    from .volume_io import VolumeMetadata
 
 
 @ti.data_oriented
@@ -197,3 +202,142 @@ class VoxelVolume:
             if self.data[i, j, k] > 0:
                 count += 1
         return count
+
+    def extract_mesh(self, isovalue: float = 0.5,
+                     marching_cubes: Optional["MarchingCubes"] = None
+                     ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """Marching Cubes로 등치면 메쉬 추출.
+
+        복셀 데이터에서 지정된 등위값에 해당하는 표면을 삼각형 메쉬로 추출합니다.
+        드릴링 결과를 시각화하는 데 사용됩니다.
+
+        Args:
+            isovalue: 등위값 (기본값 0.5). 이 값보다 큰 복셀은 내부로 간주
+            marching_cubes: 재사용할 MarchingCubes 객체 (None이면 새로 생성)
+
+        Returns:
+            (vertices, normals, faces): 각각 (N, 3) numpy 배열
+        """
+        from .marching_cubes import MarchingCubes
+
+        if marching_cubes is None:
+            marching_cubes = MarchingCubes()
+
+        return marching_cubes.extract(self, isovalue)
+
+    def create_mesh_from_volume(self, isovalue: float = 0.5) -> "TriangleMesh":
+        """복셀 볼륨에서 TriangleMesh 객체 생성.
+
+        Args:
+            isovalue: 등위값
+
+        Returns:
+            TriangleMesh 객체
+        """
+        from .mesh import TriangleMesh
+
+        vertices, normals, faces = self.extract_mesh(isovalue)
+
+        if len(vertices) == 0:
+            # 빈 메쉬 반환
+            return TriangleMesh.create_box(size=(1, 1, 1))
+
+        mesh = TriangleMesh(vertices, faces, name="VoxelMesh")
+        return mesh
+
+    # =========================================================================
+    # 파일 I/O (NRRD/NIFTI 지원)
+    # =========================================================================
+
+    @classmethod
+    def load(
+        cls,
+        filepath: Union[str, Path],
+        max_resolution: Optional[int] = 128
+    ) -> "VoxelVolume":
+        """NRRD/NIFTI 파일에서 VoxelVolume 로드.
+
+        3D Slicer에서 생성한 CT 볼륨을 로드합니다.
+
+        Args:
+            filepath: NRRD/NIFTI 파일 경로
+            max_resolution: 최대 해상도 (초과 시 다운샘플링, None이면 원본 유지)
+
+        Returns:
+            VoxelVolume 객체
+        """
+        from .volume_io import VolumeLoader
+
+        data, metadata = VolumeLoader.load(filepath, max_resolution)
+
+        # VoxelVolume 생성
+        volume = cls(
+            resolution=data.shape,
+            origin=metadata.origin,
+            spacing=metadata.min_spacing
+        )
+
+        # 데이터 설정 (밀도는 정규화)
+        density = data.astype(np.float32)
+        if density.max() > 0:
+            density = density / density.max()
+        volume.data.from_numpy(density)
+
+        # 재료는 밀도 기반으로 설정 (0 = empty, 1 = bone)
+        material = np.where(density > 0.5, 1, 0).astype(np.int32)
+        volume.material.from_numpy(material)
+
+        return volume
+
+    @classmethod
+    def load_labelmap(
+        cls,
+        filepath: Union[str, Path],
+        label_mapping: Optional[Dict[int, int]] = None,
+        max_resolution: Optional[int] = 128
+    ) -> "VoxelVolume":
+        """세그멘테이션 labelmap에서 VoxelVolume 로드.
+
+        3D Slicer에서 생성한 세그멘테이션 labelmap을 로드합니다.
+
+        Args:
+            filepath: Labelmap 파일 경로
+            label_mapping: label → material 매핑 딕셔너리
+                기본값: {0: 0 (empty), 1: 1 (bone), 2: 2 (disc), 3: 3 (soft)}
+            max_resolution: 최대 해상도
+
+        Returns:
+            VoxelVolume 객체
+        """
+        from .volume_io import VolumeLoader
+
+        density, material, metadata = VolumeLoader.load_labelmap(
+            filepath, label_mapping, max_resolution
+        )
+
+        # VoxelVolume 생성
+        volume = cls(
+            resolution=density.shape,
+            origin=metadata.origin,
+            spacing=metadata.min_spacing
+        )
+
+        # 데이터 설정
+        volume.data.from_numpy(density)
+        volume.material.from_numpy(material)
+
+        return volume
+
+    def save_nrrd(self, filepath: Union[str, Path]):
+        """NRRD 형식으로 저장.
+
+        Args:
+            filepath: 저장할 파일 경로
+        """
+        from .volume_io import VolumeLoader
+
+        data = self.data.to_numpy()
+        # SimpleITK는 Python native float 타입을 요구함
+        origin = (float(self.origin[0]), float(self.origin[1]), float(self.origin[2]))
+
+        VolumeLoader.save_nrrd(filepath, data, origin, float(self.spacing))

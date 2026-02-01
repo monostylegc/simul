@@ -23,8 +23,9 @@
 |------|---------|------|----------|------|
 | TET4 (C3D4) | 4 | 3D | 1 | ✅ 구현 완료 |
 | TRI3 (CPS3/CPE3) | 3 | 2D | 1 | ✅ 구현 완료 |
+| HEX8 (C3D8) | 8 | 3D | 8 | ✅ 구현 완료 (2025-02) |
+| QUAD4 (CPS4/CPE4) | 4 | 2D | 4 | ✅ 구현 완료 (2025-02) |
 | TET10 (C3D10) | 10 | 3D | 4 | 🔲 정의만 |
-| QUAD4 | 4 | 2D | 4 | 🔲 정의만 |
 
 ### 3. 재료 모델
 
@@ -47,16 +48,89 @@
 σ = J⁻¹ · (μ·(B - I) + λ·ln(J)·I)
 ```
 
-### 4. 검증 결과
+### 4. HEX8/QUAD4 요소 구현 (2025-02)
+
+#### 4.1 HEX8 (8노드 육면체)
+
+**노드 배치:**
+```
+    7-------6
+   /|      /|
+  4-------5 |
+  | |     | |
+  | 3-----|-2
+  |/      |/
+  0-------1
+```
+
+**형상함수:**
+```python
+N_i(ξ,η,ζ) = (1/8)(1 + ξ_i·ξ)(1 + η_i·η)(1 + ζ_i·ζ)
+```
+
+**Gauss 적분:** 2×2×2 = 8점, ξ,η,ζ ∈ {-1/√3, +1/√3}
+
+**추가된 함수 (`element.py`):**
+- `get_gauss_points_hex8()`: Gauss점 및 가중치
+- `get_shape_functions_hex8()`: 형상함수
+- `get_shape_derivatives_hex8()`: 형상함수 미분
+
+#### 4.2 QUAD4 (4노드 사각형)
+
+**노드 배치:**
+```
+  3-------2
+  |       |
+  |       |
+  0-------1
+```
+
+**형상함수:**
+```python
+N_i(ξ,η) = (1/4)(1 + ξ_i·ξ)(1 + η_i·η)
+```
+
+**Gauss 적분:** 2×2 = 4점, ξ,η ∈ {-1/√3, +1/√3}
+
+**추가된 함수 (`element.py`):**
+- `get_gauss_points_quad4()`: Gauss점 및 가중치
+- `get_shape_functions_quad4()`: 형상함수
+- `get_shape_derivatives_quad4()`: 형상함수 미분
+
+### 5. 검증 결과
 
 ```
-6 passed in 3.24s
+24 passed in 6.37s
+
+test_fem.py (6개):
 - test_element_types: 요소 정의 검증
 - test_mesh_creation: 메쉬 생성 및 체적 계산
 - test_linear_elastic_material: Lamé 파라미터 계산
 - test_neo_hookean_material: 초탄성 재료 속성
 - test_solver_linear_tet: 3D 인장 해석
 - test_2d_triangle: 2D 삼각형 요소
+
+test_hex8.py (9개):  # 새로 추가 (2025-02)
+- test_shape_function_sum: ΣN = 1 검증
+- test_shape_function_at_nodes: N_i(node_j) = δ_ij
+- test_shape_derivatives_sum: ΣdN = 0
+- test_gauss_points_count: 8개 Gauss점
+- test_gauss_weights_sum: Σw = 8 (기준 육면체 부피)
+- test_unit_cube_volume: 단위 정육면체 부피 = 1
+- test_scaled_cube_volume: 2×3×4 직육면체 부피 = 24
+- test_deformation_gradient_identity: 무변형시 F = I
+- test_compression_direction: 압축 해석 변위 방향
+
+test_quad4.py (9개):  # 새로 추가 (2025-02)
+- test_shape_function_sum: ΣN = 1 검증
+- test_shape_function_at_nodes: N_i(node_j) = δ_ij
+- test_shape_derivatives_sum: ΣdN = 0
+- test_gauss_points_count: 4개 Gauss점
+- test_gauss_weights_sum: Σw = 4 (기준 사각형 면적)
+- test_unit_square_area: 단위 정사각형 면적 = 1
+- test_scaled_rectangle_area: 2×3 직사각형 면적 = 6
+- test_deformation_gradient_identity: 무변형시 F = I
+- test_2x2_mesh_creation: 2×2 메쉬 총 면적 = 4
 ```
 
 ## 사용 예시
@@ -125,7 +199,10 @@ f_a = - Σ_gp P : (dN_a/dX) · det(J₀) · w
 
 ### 1. 고차 요소 (우선순위: 높음)
 - [ ] TET10 완전 구현 (10-node quadratic tetrahedron)
-- [ ] QUAD4/QUAD8 구현
+- [x] QUAD4 구현 ✅ (2025-02)
+- [x] HEX8 구현 ✅ (2025-02)
+- [ ] QUAD8 구현
+- [ ] HEX20 구현
 
 ### 2. 기하학적 비선형성 (우선순위: 높음)
 - [ ] Tangent stiffness matrix에 geometric stiffness 추가

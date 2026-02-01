@@ -209,3 +209,181 @@ def get_shape_derivatives_tet10(xi: float, eta: float, zeta: float) -> np.ndarra
     dN[9, 2] = 4*L3
 
     return dN
+
+
+# ============================================================================
+# HEX8 요소 (8노드 육면체)
+# ============================================================================
+
+# HEX8 노드 좌표 (자연 좌표계)
+# 노드 배치:
+#     7-------6
+#    /|      /|
+#   4-------5 |
+#   | |     | |
+#   | 3-----|-2
+#   |/      |/
+#   0-------1
+HEX8_NODE_COORDS = np.array([
+    [-1, -1, -1],  # 0
+    [+1, -1, -1],  # 1
+    [+1, +1, -1],  # 2
+    [-1, +1, -1],  # 3
+    [-1, -1, +1],  # 4
+    [+1, -1, +1],  # 5
+    [+1, +1, +1],  # 6
+    [-1, +1, +1],  # 7
+], dtype=np.float64)
+
+
+def get_gauss_points_hex8() -> Tuple[np.ndarray, np.ndarray]:
+    """HEX8 요소의 Gauss 적분점과 가중치 (2×2×2 = 8점).
+
+    Returns:
+        points: Gauss점 좌표 (8, 3)
+        weights: 가중치 (8,)
+    """
+    gp = 1.0 / np.sqrt(3.0)  # ≈ 0.57735
+
+    points = np.array([
+        [-gp, -gp, -gp],
+        [+gp, -gp, -gp],
+        [+gp, +gp, -gp],
+        [-gp, +gp, -gp],
+        [-gp, -gp, +gp],
+        [+gp, -gp, +gp],
+        [+gp, +gp, +gp],
+        [-gp, +gp, +gp],
+    ])
+
+    # 각 Gauss점의 가중치는 1.0
+    weights = np.ones(8)
+
+    return points, weights
+
+
+def get_shape_functions_hex8(xi: float, eta: float, zeta: float) -> np.ndarray:
+    """HEX8 요소의 형상함수.
+
+    N_i(ξ,η,ζ) = (1/8)(1 + ξ_i·ξ)(1 + η_i·η)(1 + ζ_i·ζ)
+
+    Args:
+        xi, eta, zeta: 자연 좌표 (-1 ~ +1)
+
+    Returns:
+        형상함수 값 (8,)
+    """
+    N = np.zeros(8)
+    for i in range(8):
+        xi_i, eta_i, zeta_i = HEX8_NODE_COORDS[i]
+        N[i] = 0.125 * (1 + xi_i * xi) * (1 + eta_i * eta) * (1 + zeta_i * zeta)
+    return N
+
+
+def get_shape_derivatives_hex8(xi: float, eta: float, zeta: float) -> np.ndarray:
+    """HEX8 요소의 형상함수 미분.
+
+    dN_i/dξ = (1/8) * ξ_i * (1 + η_i·η) * (1 + ζ_i·ζ)
+    dN_i/dη = (1/8) * (1 + ξ_i·ξ) * η_i * (1 + ζ_i·ζ)
+    dN_i/dζ = (1/8) * (1 + ξ_i·ξ) * (1 + η_i·η) * ζ_i
+
+    Args:
+        xi, eta, zeta: 자연 좌표 (-1 ~ +1)
+
+    Returns:
+        dN/d(xi,eta,zeta) 행렬 (8, 3)
+    """
+    dN = np.zeros((8, 3))
+    for i in range(8):
+        xi_i, eta_i, zeta_i = HEX8_NODE_COORDS[i]
+
+        # dN/dxi
+        dN[i, 0] = 0.125 * xi_i * (1 + eta_i * eta) * (1 + zeta_i * zeta)
+        # dN/deta
+        dN[i, 1] = 0.125 * (1 + xi_i * xi) * eta_i * (1 + zeta_i * zeta)
+        # dN/dzeta
+        dN[i, 2] = 0.125 * (1 + xi_i * xi) * (1 + eta_i * eta) * zeta_i
+
+    return dN
+
+
+# ============================================================================
+# QUAD4 요소 (4노드 사각형)
+# ============================================================================
+
+# QUAD4 노드 좌표 (자연 좌표계)
+# 노드 배치:
+#   3-------2
+#   |       |
+#   |       |
+#   0-------1
+QUAD4_NODE_COORDS = np.array([
+    [-1, -1],  # 0
+    [+1, -1],  # 1
+    [+1, +1],  # 2
+    [-1, +1],  # 3
+], dtype=np.float64)
+
+
+def get_gauss_points_quad4() -> Tuple[np.ndarray, np.ndarray]:
+    """QUAD4 요소의 Gauss 적분점과 가중치 (2×2 = 4점).
+
+    Returns:
+        points: Gauss점 좌표 (4, 2)
+        weights: 가중치 (4,)
+    """
+    gp = 1.0 / np.sqrt(3.0)  # ≈ 0.57735
+
+    points = np.array([
+        [-gp, -gp],
+        [+gp, -gp],
+        [+gp, +gp],
+        [-gp, +gp],
+    ])
+
+    # 각 Gauss점의 가중치는 1.0
+    weights = np.ones(4)
+
+    return points, weights
+
+
+def get_shape_functions_quad4(xi: float, eta: float) -> np.ndarray:
+    """QUAD4 요소의 형상함수.
+
+    N_i(ξ,η) = (1/4)(1 + ξ_i·ξ)(1 + η_i·η)
+
+    Args:
+        xi, eta: 자연 좌표 (-1 ~ +1)
+
+    Returns:
+        형상함수 값 (4,)
+    """
+    N = np.zeros(4)
+    for i in range(4):
+        xi_i, eta_i = QUAD4_NODE_COORDS[i]
+        N[i] = 0.25 * (1 + xi_i * xi) * (1 + eta_i * eta)
+    return N
+
+
+def get_shape_derivatives_quad4(xi: float, eta: float) -> np.ndarray:
+    """QUAD4 요소의 형상함수 미분.
+
+    dN_i/dξ = (1/4) * ξ_i * (1 + η_i·η)
+    dN_i/dη = (1/4) * (1 + ξ_i·ξ) * η_i
+
+    Args:
+        xi, eta: 자연 좌표 (-1 ~ +1)
+
+    Returns:
+        dN/d(xi,eta) 행렬 (4, 2)
+    """
+    dN = np.zeros((4, 2))
+    for i in range(4):
+        xi_i, eta_i = QUAD4_NODE_COORDS[i]
+
+        # dN/dxi
+        dN[i, 0] = 0.25 * xi_i * (1 + eta_i * eta)
+        # dN/deta
+        dN[i, 1] = 0.25 * (1 + xi_i * xi) * eta_i
+
+    return dN

@@ -178,6 +178,38 @@ class FEMesh:
                        self.element_type == ElementType.TRI3_PE):
             # 1-point rule for TRI3
             result = ti.Vector([1.0/3.0, 1.0/3.0, 0.0, 0.5], dt=ti.f32)
+        elif ti.static(self.element_type == ElementType.HEX8):
+            # 2x2x2 Gauss rule for HEX8 (8점)
+            gp = 0.5773502691896257  # 1/sqrt(3)
+            # 각 점의 가중치는 1.0
+            if g == 0:
+                result = ti.Vector([-gp, -gp, -gp, 1.0], dt=ti.f32)
+            elif g == 1:
+                result = ti.Vector([+gp, -gp, -gp, 1.0], dt=ti.f32)
+            elif g == 2:
+                result = ti.Vector([+gp, +gp, -gp, 1.0], dt=ti.f32)
+            elif g == 3:
+                result = ti.Vector([-gp, +gp, -gp, 1.0], dt=ti.f32)
+            elif g == 4:
+                result = ti.Vector([-gp, -gp, +gp, 1.0], dt=ti.f32)
+            elif g == 5:
+                result = ti.Vector([+gp, -gp, +gp, 1.0], dt=ti.f32)
+            elif g == 6:
+                result = ti.Vector([+gp, +gp, +gp, 1.0], dt=ti.f32)
+            else:
+                result = ti.Vector([-gp, +gp, +gp, 1.0], dt=ti.f32)
+        elif ti.static(self.element_type == ElementType.QUAD4 or
+                       self.element_type == ElementType.QUAD4_PE):
+            # 2x2 Gauss rule for QUAD4 (4점)
+            gp = 0.5773502691896257  # 1/sqrt(3)
+            if g == 0:
+                result = ti.Vector([-gp, -gp, 0.0, 1.0], dt=ti.f32)
+            elif g == 1:
+                result = ti.Vector([+gp, -gp, 0.0, 1.0], dt=ti.f32)
+            elif g == 2:
+                result = ti.Vector([+gp, +gp, 0.0, 1.0], dt=ti.f32)
+            else:
+                result = ti.Vector([-gp, +gp, 0.0, 1.0], dt=ti.f32)
 
         return result
 
@@ -203,6 +235,42 @@ class FEMesh:
             dN[0, 0] = -1.0; dN[0, 1] = -1.0
             dN[1, 0] = 1.0;  dN[1, 1] = 0.0
             dN[2, 0] = 0.0;  dN[2, 1] = 1.0
+
+        elif ti.static(self.element_type == ElementType.HEX8):
+            # HEX8: 8노드 육면체
+            # dN_i/dξ = (1/8) * ξ_i * (1 + η_i·η) * (1 + ζ_i·ζ)
+            # dN_i/dη = (1/8) * (1 + ξ_i·ξ) * η_i * (1 + ζ_i·ζ)
+            # dN_i/dζ = (1/8) * (1 + ξ_i·ξ) * (1 + η_i·η) * ζ_i
+            # 노드 좌표: 0:(-1,-1,-1), 1:(+1,-1,-1), 2:(+1,+1,-1), 3:(-1,+1,-1)
+            #           4:(-1,-1,+1), 5:(+1,-1,+1), 6:(+1,+1,+1), 7:(-1,+1,+1)
+            xi_n = ti.Vector([-1.0, 1.0, 1.0, -1.0, -1.0, 1.0, 1.0, -1.0], dt=ti.f32)
+            eta_n = ti.Vector([-1.0, -1.0, 1.0, 1.0, -1.0, -1.0, 1.0, 1.0], dt=ti.f32)
+            zeta_n = ti.Vector([-1.0, -1.0, -1.0, -1.0, 1.0, 1.0, 1.0, 1.0], dt=ti.f32)
+
+            for i in ti.static(range(8)):
+                xi_i = xi_n[i]
+                eta_i = eta_n[i]
+                zeta_i = zeta_n[i]
+
+                dN[i, 0] = 0.125 * xi_i * (1.0 + eta_i * eta) * (1.0 + zeta_i * zeta)
+                dN[i, 1] = 0.125 * (1.0 + xi_i * xi) * eta_i * (1.0 + zeta_i * zeta)
+                dN[i, 2] = 0.125 * (1.0 + xi_i * xi) * (1.0 + eta_i * eta) * zeta_i
+
+        elif ti.static(self.element_type == ElementType.QUAD4 or
+                       self.element_type == ElementType.QUAD4_PE):
+            # QUAD4: 4노드 사각형
+            # dN_i/dξ = (1/4) * ξ_i * (1 + η_i·η)
+            # dN_i/dη = (1/4) * (1 + ξ_i·ξ) * η_i
+            # 노드 좌표: 0:(-1,-1), 1:(+1,-1), 2:(+1,+1), 3:(-1,+1)
+            xi_n = ti.Vector([-1.0, 1.0, 1.0, -1.0], dt=ti.f32)
+            eta_n = ti.Vector([-1.0, -1.0, 1.0, 1.0], dt=ti.f32)
+
+            for i in ti.static(range(4)):
+                xi_i = xi_n[i]
+                eta_i = eta_n[i]
+
+                dN[i, 0] = 0.25 * xi_i * (1.0 + eta_i * eta)
+                dN[i, 1] = 0.25 * (1.0 + xi_i * xi) * eta_i
 
         return dN
 
