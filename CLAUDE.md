@@ -24,12 +24,13 @@ uv run pytest spine_sim/ -v
 ## Tech Stack
 
 - **Python 3.13+** with **Taichi** (GPU 가속 컴퓨팅)
+- **Three.js** - 웹 기반 3D 시뮬레이터 (신규 추가, 2026-02)
 - **MONAI** - CT 자동 세그멘테이션 (아직 미구현)
 - **FEM** - 유한요소법 해석 (자체 구현 완료)
 - **NOSB-PD** - Peridynamics 파괴 해석 (자체 구현 완료)
 - **Taichi GGUI** - 렌더링 및 UI
 
-## 현재 구현 상태 (2024-01)
+## 현재 구현 상태 (2026-01)
 
 ### ✅ 완료된 모듈
 
@@ -63,6 +64,16 @@ uv run pytest spine_sim/ -v
 **App** - `app/`
 - `simulator.py`: Taichi GGUI 기반 메인 시뮬레이터
 
+#### 3. 웹 시뮬레이터 (web/) - 신규 2026-02
+
+**Three.js 기반 웹 버전** - `web/`
+- `index.html`: UI 레이아웃
+- `src/main.js`: Three.js 메인 코드, STL 로딩, 이벤트 처리
+- `src/voxel.js`: 복셀 시스템, Marching Cubes
+- 복셀 기반 드릴링 구현 완료
+- L4/L5 척추 분리 배치
+- 50+ FPS 성능
+
 ### 🔲 미구현
 
 - MONAI 세그멘테이션
@@ -93,6 +104,13 @@ spine_sim/
         ├── core/             # particles, bonds, neighbor, nosb
         ├── material/         # bone material
         └── solver/           # NOSBSolver
+
+web/                           # Three.js 웹 시뮬레이터 (신규)
+├── index.html                 # UI 레이아웃
+├── src/
+│   ├── main.js               # Three.js 메인
+│   └── voxel.js              # 복셀 + Marching Cubes
+└── stl/                       # 샘플 STL 파일
 ```
 
 ## Key Constraints
@@ -103,7 +121,14 @@ spine_sim/
 
 ## 주요 사용법
 
-### 시뮬레이터 실행
+### 웹 시뮬레이터 실행 (권장)
+```bash
+cd web
+python -m http.server 8080
+# 브라우저에서 http://localhost:8080 접속
+```
+
+### Taichi 시뮬레이터 실행
 ```python
 import taichi as ti
 ti.init(arch=ti.gpu)
@@ -162,10 +187,12 @@ uv run pytest spine_sim/analysis/peridynamics/ -v
 1. 주석은 반드시 한글로 달아라
 2. 변수명은 절대 한글로 작성하지 마라
 3. 사용자에게 설명은 반드시 한글로 해라
+4. 한 작업이 끝날 때 마다 진행 상황을 마크다운 파일로 업데이트 해라.
 
 ## 참고 문서
 
 - `spine_sim/analysis/peridynamics/NOSB_PD_PROGRESS.md` - NOSB-PD 구현 상세
 - `spine_sim/analysis/fem/FEM_PROGRESS.md` - FEM 구현 상세
 - `spine_sim/SIMULATOR_PROGRESS.md` - 시뮬레이터 구현 상세
+- `web/WEB_SIMULATOR_PROGRESS.md` - **웹 시뮬레이터 진행 상황 (최신)**
 - `rough_plan.md` - 전체 프로젝트 계획
