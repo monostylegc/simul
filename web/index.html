@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Spine Surgery Simulator</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            font-family: 'Segoe UI', sans-serif;
+            overflow: hidden;
+            background: #1a1a2e;
+        }
+        #container {
+            width: 100vw;
+            height: 100vh;
+            display: flex;
+        }
+        #sidebar {
+            width: 280px;
+            background: #16213e;
+            padding: 20px;
+            color: #eee;
+            overflow-y: auto;
+        }
+        #canvas-container {
+            flex: 1;
+            position: relative;
+        }
+        canvas {
+            display: block;
+        }
+
+        /* UI 스타일 */
+        .panel {
+            background: #1a1a2e;
+            border-radius: 8px;
+            padding: 15px;
+            margin-bottom: 15px;
+        }
+        .panel h3 {
+            color: #4fc3f7;
+            margin-bottom: 10px;
+            font-size: 14px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+        .tool-btn {
+            width: 100%;
+            padding: 10px;
+            margin: 5px 0;
+            border: none;
+            border-radius: 5px;
+            background: #0f3460;
+            color: #fff;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .tool-btn:hover {
+            background: #1a5276;
+        }
+        .tool-btn.active {
+            background: #e94560;
+        }
+
+        .slider-container {
+            margin: 10px 0;
+        }
+        .slider-container label {
+            display: block;
+            margin-bottom: 5px;
+            font-size: 12px;
+            color: #aaa;
+        }
+        .slider-container input[type="range"] {
+            width: 100%;
+        }
+        .slider-value {
+            text-align: right;
+            font-size: 12px;
+            color: #4fc3f7;
+        }
+
+        /* 상태 표시 */
+        #status {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            background: rgba(0,0,0,0.7);
+            color: #fff;
+            padding: 10px 15px;
+            border-radius: 5px;
+            font-size: 12px;
+        }
+        #status .label {
+            color: #888;
+        }
+
+        /* 드릴 커서 */
+        #drill-cursor {
+            position: absolute;
+            pointer-events: none;
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <div id="container">
+        <div id="sidebar">
+            <h2 style="color: #4fc3f7; margin-bottom: 20px;">Spine Simulator</h2>
+
+            <!-- 도구 패널 -->
+            <div class="panel">
+                <h3>Tools</h3>
+                <button class="tool-btn active" data-tool="navigate">Navigate</button>
+                <button class="tool-btn" data-tool="drill">Drill (Eraser)</button>
+                <button class="tool-btn" data-tool="measure">Measure</button>
+            </div>
+
+            <!-- 드릴 설정 -->
+            <div class="panel" id="drill-panel" style="display: none;">
+                <h3>Drill Settings</h3>
+                <div class="slider-container">
+                    <label>Radius</label>
+                    <input type="range" id="drill-radius" min="1" max="15" value="5">
+                    <div class="slider-value"><span id="drill-radius-value">5</span> mm</div>
+                </div>
+                <div class="slider-container">
+                    <label>Depth</label>
+                    <input type="range" id="drill-depth" min="1" max="30" value="10">
+                    <div class="slider-value"><span id="drill-depth-value">10</span> mm</div>
+                </div>
+            </div>
+
+            <!-- 모델 패널 -->
+            <div class="panel">
+                <h3>Models</h3>
+                <button class="tool-btn" id="btn-load-sample">Load Sample (L4+L5)</button>
+                <button class="tool-btn" id="btn-load-stl">Load STL File</button>
+                <input type="file" id="file-input" accept=".stl,.STL" style="display: none;">
+                <button class="tool-btn" id="btn-clear-all">Clear All</button>
+                <div id="model-list" style="margin-top: 10px; font-size: 12px;"></div>
+            </div>
+
+            <!-- 뷰 패널 -->
+            <div class="panel">
+                <h3>View</h3>
+                <button class="tool-btn" id="btn-reset-view">Reset View</button>
+                <button class="tool-btn" id="btn-top-view">Top View</button>
+                <button class="tool-btn" id="btn-front-view">Front View</button>
+            </div>
+        </div>
+
+        <div id="canvas-container">
+            <div id="status">
+                <div><span class="label">Tool:</span> <span id="current-tool">Navigate</span></div>
+                <div><span class="label">FPS:</span> <span id="fps">60</span></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Three.js -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/STLLoader.js"></script>
+    <!-- Voxel system -->
+    <script src="src/voxel.js"></script>
+    <script src="src/main.js"></script>
+</body>
+</html>
