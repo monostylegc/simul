@@ -15,7 +15,7 @@ CT 영상으로부터 수술 전 계획 수립: 나사/케이지 배치, 내시�
 uv sync
 
 # 웹 시뮬레이터 실행
-cd src/simulator && python -m http.server 8080
+cd src/simulator && uv run python -m http.server 8080
 
 # 테스트 실행
 uv run pytest src/ -v

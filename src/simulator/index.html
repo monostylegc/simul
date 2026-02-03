@@ -200,10 +200,17 @@
             <!-- 모델 패널 -->
             <div class="panel">
                 <h3>Models</h3>
-                <button class="tool-btn" id="btn-load-sample">Load Sample (L4+L5)</button>
-                <button class="tool-btn" id="btn-load-stl">Load STL File(s)</button>
-                <button class="tool-btn" id="btn-load-nrrd">Load NRRD (3D Slicer)</button>
+                <button class="tool-btn" id="btn-load-sample">Load Sample (L4+L5+Disc)</button>
+
+                <!-- 파일 선택 영역 -->
+                <div id="drop-zone" style="margin: 10px 0; padding: 20px; border: 2px dashed #4fc3f7; border-radius: 8px; text-align: center; cursor: pointer; transition: all 0.2s;">
+                    <div style="font-size: 24px; margin-bottom: 5px;">📁</div>
+                    <div style="font-size: 12px; color: #aaa;">STL 파일을 드래그하거나<br>클릭하여 선택</div>
+                    <div style="font-size: 10px; color: #666; margin-top: 5px;">(여러 파일 선택 가능)</div>
+                </div>
                 <input type="file" id="file-input" accept=".stl,.STL" style="display: none;" multiple>
+
+                <button class="tool-btn" id="btn-load-nrrd">Load NRRD (3D Slicer)</button>
                 <input type="file" id="nrrd-input" accept=".nrrd,.nhdr" style="display: none;">
                 <button class="tool-btn" id="btn-clear-all">Clear All</button>
 

@@ -1,0 +1,4 @@
+{
+  "files": ["L5.stl", "L4.stl", "disc.stl"],
+  "description": "Sample spine model (L4-L5 segment with disc)"
+}

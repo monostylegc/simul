@@ -153,36 +153,58 @@ const loadSettings = {
 function loadSampleSTL() {
     clearAllMeshes();
 
+    console.log('Loading STL manifest...');
+
+    // manifest.json에서 파일 목록 로드
+    fetch('stl/manifest.json')
+        .then(response => {
+            if (!response.ok) {
+                throw new Error('manifest.json not found');
+            }
+            return response.json();
+        })
+        .then(manifest => {
+            console.log('Manifest loaded:', manifest);
+            loadSTLFilesFromList(manifest.files);
+        })
+        .catch(error => {
+            console.error('Manifest load failed:', error);
+            // 폴백: 기본 파일 로드
+            console.log('Fallback: loading default files...');
+            loadSTLFilesFromList(['L5.stl', 'L4.stl', 'disc.stl']);
+        });
+}
+
+/**
+ * STL 파일 목록에서 모든 파일 로드
+ * @param {string[]} fileList - STL 파일명 배열
+ */
+function loadSTLFilesFromList(fileList) {
     const loader = new THREE.STLLoader();
     let loadedCount = 0;
-    const totalFiles = 2;
+    const totalFiles = fileList.length;
     const geometries = {};
 
-    console.log('Loading STL files...');
+    console.log(`Loading ${totalFiles} STL files...`);
 
-    // L5 (아래쪽 척추)
-    loader.load('stl/L5.stl',
-        (geometry) => {
-            console.log('L5 loaded:', geometry.attributes.position.count, 'vertices');
-            geometries.L5 = geometry;
-            loadedCount++;
-            if (loadedCount >= totalFiles) processLoadedGeometries(geometries);
-        },
-        (progress) => console.log('L5 progress:', Math.round(progress.loaded/progress.total*100) + '%'),
-        (error) => console.error('L5 error:', error)
-    );
+    fileList.forEach(filename => {
+        const name = filename.replace(/\.[^/.]+$/, '');  // 확장자 제거
 
-    // L4 (위쪽 척추)
-    loader.load('stl/L4.stl',
-        (geometry) => {
-            console.log('L4 loaded:', geometry.attributes.position.count, 'vertices');
-            geometries.L4 = geometry;
-            loadedCount++;
-            if (loadedCount >= totalFiles) processLoadedGeometries(geometries);
-        },
-        (progress) => console.log('L4 progress:', Math.round(progress.loaded/progress.total*100) + '%'),
-        (error) => console.error('L4 error:', error)
-    );
+        loader.load(`stl/${filename}`,
+            (geometry) => {
+                console.log(`${name} loaded:`, geometry.attributes.position.count, 'vertices');
+                geometries[name] = geometry;
+                loadedCount++;
+                if (loadedCount >= totalFiles) processLoadedGeometries(geometries);
+            },
+            (progress) => {
+                if (progress.total) {
+                    console.log(`${name} progress:`, Math.round(progress.loaded/progress.total*100) + '%');
+                }
+            },
+            (error) => console.error(`${name} error:`, error)
+        );
+    });
 }
 
 /**
@@ -866,8 +888,44 @@ function setupEventListeners() {
     // 버튼
     document.getElementById('btn-load-sample').addEventListener('click', loadSampleSTL);
 
-    document.getElementById('btn-load-stl').addEventListener('click', () => {
+    // 드래그 앤 드롭 영역
+    const dropZone = document.getElementById('drop-zone');
+
+    dropZone.addEventListener('click', () => {
         document.getElementById('file-input').click();
+    });
+
+    dropZone.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        dropZone.style.borderColor = '#e94560';
+        dropZone.style.background = 'rgba(233, 69, 96, 0.1)';
+    });
+
+    dropZone.addEventListener('dragleave', (e) => {
+        e.preventDefault();
+        dropZone.style.borderColor = '#4fc3f7';
+        dropZone.style.background = 'transparent';
+    });
+
+    dropZone.addEventListener('drop', (e) => {
+        e.preventDefault();
+        dropZone.style.borderColor = '#4fc3f7';
+        dropZone.style.background = 'transparent';
+
+        const files = Array.from(e.dataTransfer.files).filter(
+            f => f.name.toLowerCase().endsWith('.stl')
+        );
+
+        if (files.length === 0) {
+            alert('STL 파일만 지원됩니다');
+            return;
+        }
+
+        if (files.length === 1) {
+            loadSTLFile(files[0]);
+        } else {
+            loadMultipleSTLFiles(files);
+        }
     });
 
     document.getElementById('file-input').addEventListener('change', (e) => {
