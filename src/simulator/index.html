@@ -1,0 +1,277 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Spine Surgery Simulator</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            font-family: 'Segoe UI', sans-serif;
+            overflow: hidden;
+            background: #1a1a2e;
+        }
+        #container {
+            width: 100vw;
+            height: 100vh;
+            display: flex;
+        }
+        #sidebar {
+            width: 280px;
+            background: #16213e;
+            padding: 20px;
+            color: #eee;
+            overflow-y: auto;
+        }
+        #canvas-container {
+            flex: 1;
+            position: relative;
+        }
+        canvas {
+            display: block;
+        }
+
+        /* UI 스타일 */
+        .panel {
+            background: #1a1a2e;
+            border-radius: 8px;
+            padding: 15px;
+            margin-bottom: 15px;
+        }
+        .panel h3 {
+            color: #4fc3f7;
+            margin-bottom: 10px;
+            font-size: 14px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+        .tool-btn {
+            width: 100%;
+            padding: 10px;
+            margin: 5px 0;
+            border: none;
+            border-radius: 5px;
+            background: #0f3460;
+            color: #fff;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .tool-btn:hover {
+            background: #1a5276;
+        }
+        .tool-btn.active {
+            background: #e94560;
+        }
+
+        .slider-container {
+            margin: 10px 0;
+        }
+        .slider-container label {
+            display: block;
+            margin-bottom: 5px;
+            font-size: 12px;
+            color: #aaa;
+        }
+        .slider-container input[type="range"] {
+            width: 100%;
+        }
+        .slider-value {
+            text-align: right;
+            font-size: 12px;
+            color: #4fc3f7;
+        }
+
+        /* 상태 표시 */
+        #status {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            background: rgba(0,0,0,0.7);
+            color: #fff;
+            padding: 10px 15px;
+            border-radius: 5px;
+            font-size: 12px;
+        }
+        #status .label {
+            color: #888;
+        }
+
+        /* 드릴 커서 */
+        #drill-cursor {
+            position: absolute;
+            pointer-events: none;
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <div id="container">
+        <div id="sidebar">
+            <h2 style="color: #4fc3f7; margin-bottom: 20px;">Spine Simulator</h2>
+
+            <!-- 도구 패널 -->
+            <div class="panel">
+                <h3>Tools</h3>
+                <button class="tool-btn active" data-tool="navigate">Navigate</button>
+                <button class="tool-btn" data-tool="drill">Drill (Eraser)</button>
+                <button class="tool-btn" data-tool="measure">Measure</button>
+            </div>
+
+            <!-- Undo/Redo 패널 -->
+            <div class="panel">
+                <h3>History</h3>
+                <div style="display: flex; gap: 10px;">
+                    <button class="tool-btn" id="btn-undo" style="flex: 1;" disabled>
+                        Undo (<span id="undo-count">0</span>)
+                    </button>
+                    <button class="tool-btn" id="btn-redo" style="flex: 1;" disabled>
+                        Redo (<span id="redo-count">0</span>)
+                    </button>
+                </div>
+                <div style="font-size: 11px; color: #888; margin-top: 5px;">
+                    Ctrl+Z / Ctrl+Y
+                </div>
+            </div>
+
+            <!-- 단면 뷰 패널 -->
+            <div class="panel">
+                <h3>Slice View</h3>
+                <button class="tool-btn" id="btn-slice-view">Toggle Slice</button>
+            </div>
+
+            <!-- 단면 설정 패널 (숨김) -->
+            <div class="panel" id="slice-panel" style="display: none;">
+                <h3>Slice Settings</h3>
+                <div style="margin-bottom: 10px;">
+                    <label style="font-size: 12px; color: #aaa;">Axis</label>
+                    <div style="display: flex; gap: 5px; margin-top: 5px;">
+                        <button class="tool-btn" data-slice-axis="x" style="flex: 1; padding: 8px;">
+                            X (Sagittal)
+                        </button>
+                        <button class="tool-btn" data-slice-axis="y" style="flex: 1; padding: 8px;">
+                            Y (Coronal)
+                        </button>
+                        <button class="tool-btn active" data-slice-axis="z" style="flex: 1; padding: 8px;">
+                            Z (Axial)
+                        </button>
+                    </div>
+                </div>
+                <div class="slider-container">
+                    <label>Position</label>
+                    <input type="range" id="slice-position" min="0" max="1" value="0.5" step="0.01">
+                    <div class="slider-value"><span id="slice-position-value">50%</span></div>
+                </div>
+            </div>
+
+            <!-- 복셀 해상도 설정 -->
+            <div class="panel">
+                <h3>Voxel Resolution</h3>
+                <div class="slider-container">
+                    <label>Resolution (STL 복셀화)</label>
+                    <input type="range" id="voxel-resolution" min="32" max="192" value="64" step="16">
+                    <div class="slider-value"><span id="voxel-resolution-value">64</span>³</div>
+                </div>
+                <div style="font-size: 11px; color: #888; margin-top: 5px;">
+                    높을수록 정밀, 느림<br>
+                    32: 빠름 | 64: 권장 | 128+: 고품질
+                </div>
+                <button class="tool-btn" id="btn-revoxelize" style="margin-top: 10px;">Re-voxelize (해상도 적용)</button>
+            </div>
+
+            <!-- 드릴 설정 -->
+            <div class="panel" id="drill-panel" style="display: none;">
+                <h3>Drill Settings</h3>
+                <div class="slider-container">
+                    <label>Radius</label>
+                    <input type="range" id="drill-radius" min="1" max="15" value="5">
+                    <div class="slider-value"><span id="drill-radius-value">5</span> mm</div>
+                </div>
+                <div class="slider-container">
+                    <label>Depth</label>
+                    <input type="range" id="drill-depth" min="1" max="30" value="10">
+                    <div class="slider-value"><span id="drill-depth-value">10</span> mm</div>
+                </div>
+            </div>
+
+            <!-- 모델 패널 -->
+            <div class="panel">
+                <h3>Models</h3>
+                <button class="tool-btn" id="btn-load-sample">Load Sample (L4+L5)</button>
+                <button class="tool-btn" id="btn-load-stl">Load STL File(s)</button>
+                <button class="tool-btn" id="btn-load-nrrd">Load NRRD (3D Slicer)</button>
+                <input type="file" id="file-input" accept=".stl,.STL" style="display: none;" multiple>
+                <input type="file" id="nrrd-input" accept=".nrrd,.nhdr" style="display: none;">
+                <button class="tool-btn" id="btn-clear-all">Clear All</button>
+
+                <!-- 좌표 설정 -->
+                <div style="margin-top: 10px; padding: 10px; background: rgba(0,0,0,0.2); border-radius: 5px;">
+                    <label style="display: flex; align-items: center; cursor: pointer; font-size: 12px; margin-bottom: 5px;">
+                        <input type="checkbox" id="chk-keep-position" checked style="margin-right: 8px;">
+                        원본 좌표 유지
+                    </label>
+                    <label style="display: flex; align-items: center; cursor: pointer; font-size: 12px;">
+                        <input type="checkbox" id="chk-center-origin" style="margin-right: 8px;">
+                        원점 중심 이동
+                    </label>
+                    <div style="font-size: 10px; color: #888; margin-top: 5px;">
+                        3D Slicer 파일은 "원본 좌표 유지" 권장
+                    </div>
+                </div>
+
+                <div id="model-list" style="margin-top: 10px; font-size: 12px;"></div>
+            </div>
+
+            <!-- NRRD 설정 패널 -->
+            <div class="panel" id="nrrd-panel" style="display: none;">
+                <h3>NRRD Settings</h3>
+                <div class="slider-container">
+                    <label>Target Resolution</label>
+                    <input type="range" id="nrrd-resolution" min="32" max="256" value="128" step="16">
+                    <div class="slider-value"><span id="nrrd-resolution-value">128</span>³</div>
+                </div>
+                <div style="font-size: 11px; color: #888; margin-top: 5px;">
+                    원본보다 높으면 업샘플링 (부드러움)<br>
+                    원본보다 낮으면 다운샘플링 (빠름)
+                </div>
+                <div id="nrrd-info" style="font-size: 11px; color: #4fc3f7; margin: 8px 0; padding: 5px; background: rgba(0,0,0,0.3); border-radius: 4px;"></div>
+                <div class="slider-container">
+                    <label>Threshold (CT 볼륨용)</label>
+                    <input type="range" id="nrrd-threshold" min="0" max="1" value="0.3" step="0.05">
+                    <div class="slider-value"><span id="nrrd-threshold-value">0.30</span></div>
+                </div>
+                <button class="tool-btn" id="btn-apply-nrrd">Apply & Generate Mesh</button>
+            </div>
+
+            <!-- 뷰 패널 -->
+            <div class="panel">
+                <h3>View</h3>
+                <button class="tool-btn" id="btn-reset-view">Reset View</button>
+                <button class="tool-btn" id="btn-top-view">Top View</button>
+                <button class="tool-btn" id="btn-front-view">Front View</button>
+            </div>
+        </div>
+
+        <div id="canvas-container">
+            <div id="status">
+                <div><span class="label">Tool:</span> <span id="current-tool">Navigate</span></div>
+                <div><span class="label">FPS:</span> <span id="fps">60</span></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Three.js -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/STLLoader.js"></script>
+    <!-- Pako (gzip 디코딩) -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pako/2.1.0/pako.min.js"></script>
+    <!-- Voxel system -->
+    <script src="src/nrrd.js"></script>
+    <script src="src/voxel.js"></script>
+    <script src="src/main.js"></script>
+</body>
+</html>

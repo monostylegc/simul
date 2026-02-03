@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FEA Result Viewer</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            font-family: 'Segoe UI', sans-serif;
+            overflow: hidden;
+            background: #1a1a2e;
+        }
+        #container {
+            width: 100vw;
+            height: 100vh;
+            display: flex;
+        }
+        #sidebar {
+            width: 300px;
+            background: #16213e;
+            padding: 20px;
+            color: #eee;
+            overflow-y: auto;
+        }
+        #canvas-container {
+            flex: 1;
+            position: relative;
+        }
+        canvas {
+            display: block;
+        }
+
+        /* UI 스타일 */
+        .panel {
+            background: #1a1a2e;
+            border-radius: 8px;
+            padding: 15px;
+            margin-bottom: 15px;
+        }
+        .panel h3 {
+            color: #4fc3f7;
+            margin-bottom: 10px;
+            font-size: 14px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+        .btn {
+            width: 100%;
+            padding: 10px;
+            margin: 5px 0;
+            border: none;
+            border-radius: 5px;
+            background: #0f3460;
+            color: #fff;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .btn:hover {
+            background: #1a5276;
+        }
+        .btn.active {
+            background: #e94560;
+        }
+
+        .slider-container {
+            margin: 10px 0;
+        }
+        .slider-container label {
+            display: block;
+            margin-bottom: 5px;
+            font-size: 12px;
+            color: #aaa;
+        }
+        .slider-container input[type="range"] {
+            width: 100%;
+        }
+        .slider-value {
+            text-align: right;
+            font-size: 12px;
+            color: #4fc3f7;
+        }
+
+        /* 상태 표시 */
+        #status {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            background: rgba(0,0,0,0.7);
+            color: #fff;
+            padding: 10px 15px;
+            border-radius: 5px;
+            font-size: 12px;
+        }
+        #status .label {
+            color: #888;
+        }
+
+        /* 컬러바 */
+        #colorbar {
+            position: absolute;
+            right: 20px;
+            top: 50%;
+            transform: translateY(-50%);
+            width: 30px;
+            height: 200px;
+            background: linear-gradient(to bottom, #ff0000, #ffff00, #00ff00, #00ffff, #0000ff);
+            border-radius: 4px;
+            border: 1px solid #444;
+        }
+        #colorbar-labels {
+            position: absolute;
+            right: 60px;
+            top: 50%;
+            transform: translateY(-50%);
+            height: 200px;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            color: #fff;
+            font-size: 11px;
+        }
+
+        /* 통계 */
+        .stat-row {
+            display: flex;
+            justify-content: space-between;
+            padding: 5px 0;
+            border-bottom: 1px solid #333;
+            font-size: 12px;
+        }
+        .stat-row .label {
+            color: #888;
+        }
+        .stat-row .value {
+            color: #4fc3f7;
+            font-family: monospace;
+        }
+
+        /* 파일 입력 */
+        #file-input {
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <div id="container">
+        <div id="sidebar">
+            <h2 style="color: #4fc3f7; margin-bottom: 20px;">FEA Viewer</h2>
+
+            <!-- 파일 로드 -->
+            <div class="panel">
+                <h3>Data</h3>
+                <button class="btn" id="btn-load">Load Result (JSON)</button>
+                <button class="btn" id="btn-load-sample">Load Sample Data</button>
+                <input type="file" id="file-input" accept=".json">
+                <div id="file-info" style="margin-top: 10px; font-size: 11px; color: #888;"></div>
+            </div>
+
+            <!-- 시각화 모드 -->
+            <div class="panel">
+                <h3>Visualization Mode</h3>
+                <button class="btn active" data-mode="displacement">Displacement</button>
+                <button class="btn" data-mode="strain">von Mises Strain</button>
+                <button class="btn" data-mode="damage">Damage</button>
+                <button class="btn" data-mode="original">Original Position</button>
+            </div>
+
+            <!-- 디스플레이 설정 -->
+            <div class="panel">
+                <h3>Display Settings</h3>
+                <div class="slider-container">
+                    <label>Particle Size</label>
+                    <input type="range" id="particle-size" min="0.1" max="3" value="1" step="0.1">
+                    <div class="slider-value"><span id="particle-size-value">1.0</span>x</div>
+                </div>
+                <div class="slider-container">
+                    <label>Displacement Scale</label>
+                    <input type="range" id="disp-scale" min="1" max="100" value="10" step="1">
+                    <div class="slider-value"><span id="disp-scale-value">10</span>x</div>
+                </div>
+                <div class="slider-container">
+                    <label>Color Range Max</label>
+                    <input type="range" id="color-max" min="0.001" max="0.1" value="0.02" step="0.001">
+                    <div class="slider-value"><span id="color-max-value">0.020</span></div>
+                </div>
+            </div>
+
+            <!-- 통계 -->
+            <div class="panel">
+                <h3>Statistics</h3>
+                <div id="stats">
+                    <div class="stat-row">
+                        <span class="label">Particles:</span>
+                        <span class="value" id="stat-particles">-</span>
+                    </div>
+                    <div class="stat-row">
+                        <span class="label">Max Disp:</span>
+                        <span class="value" id="stat-max-disp">-</span>
+                    </div>
+                    <div class="stat-row">
+                        <span class="label">Max Strain:</span>
+                        <span class="value" id="stat-max-strain">-</span>
+                    </div>
+                    <div class="stat-row">
+                        <span class="label">Max Damage:</span>
+                        <span class="value" id="stat-max-damage">-</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 뷰 -->
+            <div class="panel">
+                <h3>View</h3>
+                <button class="btn" id="btn-reset-view">Reset View</button>
+                <button class="btn" id="btn-top-view">Top View</button>
+                <button class="btn" id="btn-front-view">Front View</button>
+                <button class="btn" id="btn-side-view">Side View</button>
+            </div>
+
+            <!-- 내보내기 -->
+            <div class="panel">
+                <h3>Export</h3>
+                <button class="btn" id="btn-screenshot">Screenshot (PNG)</button>
+            </div>
+        </div>
+
+        <div id="canvas-container">
+            <div id="status">
+                <div><span class="label">Mode:</span> <span id="current-mode">Displacement</span></div>
+                <div><span class="label">FPS:</span> <span id="fps">60</span></div>
+            </div>
+            <div id="colorbar"></div>
+            <div id="colorbar-labels">
+                <span id="colorbar-max">0.02</span>
+                <span id="colorbar-mid">0.01</span>
+                <span id="colorbar-min">0.00</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Three.js -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+    <script src="src/main.js"></script>
+</body>
+</html>

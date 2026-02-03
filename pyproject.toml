@@ -9,6 +9,9 @@ dependencies = [
     "numpy>=1.24",
     "scipy>=1.10",
     "SimpleITK>=2.3",
+    "tetgen>=0.8.2",
+    "pyvista>=0.46.5",
+    "playwright>=1.58.0",
 ]
 
 [dependency-groups]
