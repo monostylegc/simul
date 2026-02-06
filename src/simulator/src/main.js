@@ -15,6 +15,10 @@ let drillPreview = null;
 let currentTool = 'navigate';
 let isMouseDown = false;
 let isDrillInitialized = false;
+let gridHelper = null;     // 그리드 헬퍼 (모델 크기에 맞게 동적 조절)
+let axesHelper = null;     // 축 헬퍼
+let drillHighlight = null;         // 드릴 영향 범위 하이라이트 (InstancedMesh)
+const MAX_PREVIEW_VOXELS = 5000;   // 최대 프리뷰 복셀 수
 
 // NRRD 관련
 let pendingNRRD = null;    // 로딩된 NRRD 데이터 (적용 전)
@@ -79,13 +83,13 @@ function init() {
 
     setupLights();
 
-    // Grid
-    const grid = new THREE.GridHelper(300, 30, 0x444444, 0x333333);
-    scene.add(grid);
+    // Grid (초기 그리드 - 모델 로드 후 크기 자동 조절됨)
+    gridHelper = new THREE.GridHelper(300, 30, 0x444444, 0x333333);
+    scene.add(gridHelper);
 
     // Axes
-    const axes = new THREE.AxesHelper(50);
-    scene.add(axes);
+    axesHelper = new THREE.AxesHelper(50);
+    scene.add(axesHelper);
 
     createDrillPreview();
     setupEventListeners();
@@ -116,27 +120,94 @@ function setupLights() {
 }
 
 // ============================================================================
-// 드릴 프리뷰 (빨간 구)
+// 드릴 프리뷰 (원통 + 깊이 표시)
 // ============================================================================
 function createDrillPreview() {
-    const geometry = new THREE.SphereGeometry(drillSettings.radius, 32, 32);
-    const material = new THREE.MeshBasicMaterial({
-        color: 0xff4444,
-        transparent: true,
-        opacity: 0.6,
-        depthTest: false
-    });
-    drillPreview = new THREE.Mesh(geometry, material);
+    drillPreview = new THREE.Group();
     drillPreview.visible = false;
     drillPreview.renderOrder = 999;
+    buildDrillPreviewComponents();
     scene.add(drillPreview);
 }
 
+/**
+ * 드릴 프리뷰 구성요소 생성 (원통 + 입구 링 + 깊이 디스크 + 축선)
+ * 로컬 좌표: Y+ = 표면 바깥, Y- = 드릴 진행 방향 (모델 안쪽)
+ */
+function buildDrillPreviewComponents() {
+    const radius = drillSettings.radius;
+    const depth = drillSettings.depth;
+
+    // 드릴 원통 (반투명, 열린 형태)
+    const cylGeom = new THREE.CylinderGeometry(radius, radius, depth, 32, 1, true);
+    cylGeom.translate(0, -depth / 2, 0);
+    const cylMat = new THREE.MeshBasicMaterial({
+        color: 0xff4444,
+        transparent: true,
+        opacity: 0.25,
+        side: THREE.DoubleSide,
+        depthTest: false
+    });
+    const cylinder = new THREE.Mesh(cylGeom, cylMat);
+    cylinder.renderOrder = 999;
+    drillPreview.add(cylinder);
+
+    // 표면 입구 링 (빨간색)
+    const ringGeom = new THREE.RingGeometry(radius * 0.8, radius, 32);
+    const ringMat = new THREE.MeshBasicMaterial({
+        color: 0xff4444,
+        transparent: true,
+        opacity: 0.7,
+        side: THREE.DoubleSide,
+        depthTest: false
+    });
+    const ring = new THREE.Mesh(ringGeom, ringMat);
+    ring.rotation.x = -Math.PI / 2;
+    ring.renderOrder = 999;
+    drillPreview.add(ring);
+
+    // 깊이 끝점 디스크 (주황색 - 드릴이 도달하는 깊이)
+    const discGeom = new THREE.CircleGeometry(radius, 32);
+    const discMat = new THREE.MeshBasicMaterial({
+        color: 0xff8800,
+        transparent: true,
+        opacity: 0.5,
+        side: THREE.DoubleSide,
+        depthTest: false
+    });
+    const disc = new THREE.Mesh(discGeom, discMat);
+    disc.position.y = -depth;
+    disc.rotation.x = -Math.PI / 2;
+    disc.renderOrder = 999;
+    drillPreview.add(disc);
+
+    // 중심축 라인 (노란색 - 깊이 방향 표시)
+    const lineGeom = new THREE.BufferGeometry().setFromPoints([
+        new THREE.Vector3(0, 0, 0),
+        new THREE.Vector3(0, -depth, 0)
+    ]);
+    const lineMat = new THREE.LineBasicMaterial({
+        color: 0xffff00,
+        depthTest: false
+    });
+    const line = new THREE.Line(lineGeom, lineMat);
+    line.renderOrder = 1000;
+    drillPreview.add(line);
+}
+
 function updateDrillPreviewSize() {
-    if (drillPreview) {
-        drillPreview.geometry.dispose();
-        drillPreview.geometry = new THREE.SphereGeometry(drillSettings.radius, 32, 32);
+    if (!drillPreview) return;
+
+    // 기존 구성요소 제거
+    while (drillPreview.children.length > 0) {
+        const child = drillPreview.children[0];
+        drillPreview.remove(child);
+        if (child.geometry) child.geometry.dispose();
+        if (child.material) child.material.dispose();
     }
+
+    // 새 구성요소 생성
+    buildDrillPreviewComponents();
 }
 
 // ============================================================================
@@ -144,7 +215,7 @@ function updateDrillPreviewSize() {
 // ============================================================================
 const loadSettings = {
     keepOriginalPosition: true,  // 원본 좌표 유지 (3D Slicer 등에서 내보낸 파일용)
-    centerToOrigin: false        // 전체 모델을 원점 중심으로 이동
+    centerToOrigin: true         // 전체 모델을 원점 중심으로 이동
 };
 
 // ============================================================================
@@ -256,6 +327,7 @@ function getColorForName(name) {
 
 /**
  * 모든 메쉬를 전체 중심 기준으로 원점에 배치
+ * geometry 정점 자체를 이동하여 정확한 좌표 변환 보장
  */
 function centerAllMeshes() {
     // 전체 바운딩 박스 계산
@@ -266,15 +338,99 @@ function centerAllMeshes() {
 
     if (box.isEmpty()) return;
 
-    // 중심 계산
+    // 전체 모델 중심 계산
     const center = box.getCenter(new THREE.Vector3());
+    const size = box.getSize(new THREE.Vector3());
 
-    // 모든 메쉬 이동
+    // geometry 정점을 직접 이동하여 원점 중심 배치
+    // (mesh.position 대신 vertex를 이동해야 복셀화/레이캐스트 정확도 보장)
     Object.values(meshes).forEach(mesh => {
-        mesh.position.sub(center);
+        const worldOffset = center.clone().sub(mesh.position);
+        mesh.geometry.translate(-worldOffset.x, -worldOffset.y, -worldOffset.z);
+        mesh.position.set(0, 0, 0);
+        mesh.geometry.computeBoundingBox();
     });
 
-    console.log(`모든 메쉬를 원점으로 이동 (오프셋: ${center.x.toFixed(1)}, ${center.y.toFixed(1)}, ${center.z.toFixed(1)})`);
+    // 그리드/축 헬퍼를 모델 크기에 맞게 업데이트
+    updateGridToModel();
+
+    console.log(`모델 중심을 원점으로 이동 (오프셋: ${center.x.toFixed(1)}, ${center.y.toFixed(1)}, ${center.z.toFixed(1)})`);
+    console.log(`모델 크기: ${size.x.toFixed(1)} x ${size.y.toFixed(1)} x ${size.z.toFixed(1)} mm`);
+}
+
+/**
+ * 모델 크기에 맞게 그리드와 축 헬퍼 동적 업데이트
+ */
+function updateGridToModel() {
+    const box = new THREE.Box3();
+    Object.values(meshes).forEach(mesh => {
+        box.expandByObject(mesh);
+    });
+
+    if (box.isEmpty()) return;
+
+    const size = box.getSize(new THREE.Vector3());
+    const maxDim = Math.max(size.x, size.y, size.z);
+
+    // 기존 그리드/축 제거
+    if (gridHelper) {
+        scene.remove(gridHelper);
+        gridHelper.geometry.dispose();
+    }
+    if (axesHelper) {
+        scene.remove(axesHelper);
+        axesHelper.geometry.dispose();
+    }
+
+    // 모델 크기에 맞는 그리드 생성 (모델의 2배 크기)
+    const gridSize = Math.ceil(maxDim * 2 / 10) * 10;
+    const step = gridSize <= 100 ? 5 : 10;
+    const divisions = Math.round(gridSize / step);
+
+    gridHelper = new THREE.GridHelper(gridSize, divisions, 0x444444, 0x333333);
+    scene.add(gridHelper);
+
+    // 축 헬퍼도 모델에 비례
+    axesHelper = new THREE.AxesHelper(maxDim * 0.4);
+    scene.add(axesHelper);
+
+    console.log(`그리드: ${gridSize}mm (${step}mm 간격, ${divisions} 분할)`);
+}
+
+/**
+ * 모델 좌표/크기 정보를 사이드바에 표시
+ */
+function updateModelInfo() {
+    const infoDiv = document.getElementById('model-info');
+    if (!infoDiv) return;
+
+    const box = new THREE.Box3();
+    const targetMeshes = isDrillInitialized ? voxelMeshes : meshes;
+    Object.values(targetMeshes).forEach(mesh => {
+        if (mesh.visible !== false) box.expandByObject(mesh);
+    });
+
+    if (box.isEmpty()) {
+        infoDiv.innerHTML = '';
+        return;
+    }
+
+    const size = box.getSize(new THREE.Vector3());
+    const center = box.getCenter(new THREE.Vector3());
+    const min = box.min;
+    const max = box.max;
+
+    infoDiv.innerHTML = `
+        <div style="padding: 8px; background: rgba(79, 195, 247, 0.1); border: 1px solid rgba(79, 195, 247, 0.3); border-radius: 4px; margin-top: 8px;">
+            <div style="color: #4fc3f7; font-size: 11px; font-weight: bold; margin-bottom: 4px;">Model Info</div>
+            <div style="font-size: 11px; color: #ccc;">크기: ${size.x.toFixed(1)} x ${size.y.toFixed(1)} x ${size.z.toFixed(1)} mm</div>
+            <div style="font-size: 11px; color: #ccc;">중심: (${center.x.toFixed(1)}, ${center.y.toFixed(1)}, ${center.z.toFixed(1)})</div>
+            <div style="font-size: 10px; color: #888; margin-top: 2px;">
+                min: (${min.x.toFixed(1)}, ${min.y.toFixed(1)}, ${min.z.toFixed(1)})<br>
+                max: (${max.x.toFixed(1)}, ${max.y.toFixed(1)}, ${max.z.toFixed(1)})
+            </div>
+        </div>
+    `;
 }
 
 /**
@@ -315,6 +471,7 @@ function arrangeVertebrae(geometries) {
 
 function onAllLoaded() {
     console.log('All STL files loaded');
+    updateGridToModel();
     fitCameraToScene();
     updateModelList();
     isDrillInitialized = false;  // 새로 로드되면 복셀 초기화 필요
@@ -390,9 +547,89 @@ function clearAllMeshes() {
     });
     voxelMeshes = {};
     voxelGrids = {};
+    clearDrillHighlight();
 
     isDrillInitialized = false;
     updateModelList();
+}
+
+// ============================================================================
+// 드릴 영향 범위 하이라이트 (InstancedMesh)
+// ============================================================================
+
+/**
+ * 드릴 하이라이트 InstancedMesh 생성 (복셀 초기화 후 호출)
+ */
+function createDrillHighlight() {
+    clearDrillHighlight();
+
+    const firstGrid = Object.values(voxelGrids)[0];
+    if (!firstGrid) return;
+
+    const s = firstGrid.cellSize * 0.96;
+    const boxGeom = new THREE.BoxGeometry(s, s, s);
+    const material = new THREE.MeshBasicMaterial({
+        color: 0xff2222,
+        transparent: true,
+        opacity: 0.45,
+        depthTest: false
+    });
+
+    drillHighlight = new THREE.InstancedMesh(boxGeom, material, MAX_PREVIEW_VOXELS);
+    drillHighlight.count = 0;
+    drillHighlight.visible = false;
+    drillHighlight.renderOrder = 998;
+    scene.add(drillHighlight);
+}
+
+/**
+ * 마우스 위치에서 드릴 영향 범위 복셀 하이라이트 업데이트
+ */
+function updateDrillHighlight(intersection) {
+    if (!isDrillInitialized || !intersection || !drillHighlight) {
+        if (drillHighlight) drillHighlight.visible = false;
+        return;
+    }
+
+    const worldNormal = intersection.face.normal.clone()
+        .transformDirection(intersection.object.matrixWorld)
+        .normalize();
+    const drillDir = worldNormal.clone().negate();
+    const point = intersection.point;
+
+    const matrix = new THREE.Matrix4();
+    let count = 0;
+
+    Object.values(voxelGrids).forEach(grid => {
+        const affected = grid.previewDrill(point, drillDir, drillSettings.radius, drillSettings.depth);
+        affected.forEach(pos => {
+            if (count >= MAX_PREVIEW_VOXELS) return;
+            const worldPos = grid.gridToWorld(pos.x, pos.y, pos.z);
+            matrix.setPosition(worldPos.x, worldPos.y, worldPos.z);
+            drillHighlight.setMatrixAt(count, matrix);
+            count++;
+        });
+    });
+
+    drillHighlight.count = count;
+    drillHighlight.instanceMatrix.needsUpdate = true;
+    drillHighlight.visible = count > 0;
+
+    // 상태바에 영향 복셀 수 표시
+    const dInfo = document.getElementById('drill-d-info');
+    if (dInfo) dInfo.textContent = `${drillSettings.depth} (${count})`;
+}
+
+/**
+ * 드릴 하이라이트 제거
+ */
+function clearDrillHighlight() {
+    if (drillHighlight) {
+        scene.remove(drillHighlight);
+        if (drillHighlight.geometry) drillHighlight.geometry.dispose();
+        if (drillHighlight.material) drillHighlight.material.dispose();
+        drillHighlight = null;
+    }
 }
 
 // ============================================================================
@@ -441,6 +678,7 @@ function initializeVoxels() {
         });
 
         isDrillInitialized = true;
+        createDrillHighlight();
         document.getElementById('current-tool').textContent = 'Drill';
         updateModelList();
         console.log('Voxel initialization complete');
@@ -450,15 +688,24 @@ function initializeVoxels() {
 // ============================================================================
 // 드릴링 - 복셀 제거 후 메쉬 재생성
 // ============================================================================
-function performDrill(point, normal) {
+function performDrill(intersection) {
     if (!isDrillInitialized) return;
 
     const radius = drillSettings.radius;
+    const depth = drillSettings.depth;
+    const point = intersection.point;
+
+    // 표면 법선을 월드 좌표로 변환 후 안쪽 방향 계산
+    const worldNormal = intersection.face.normal.clone()
+        .transformDirection(intersection.object.matrixWorld)
+        .normalize();
+    const drillDir = worldNormal.clone().negate();
+
     let totalRemoved = 0;
 
     Object.entries(voxelGrids).forEach(([name, grid]) => {
-        // 복셀 드릴링
-        const removed = grid.drillSphere(point, radius);
+        // 깊이 방향 원통 드릴링
+        const removed = grid.drillCylinder(point, drillDir, radius, depth);
         totalRemoved += removed;
 
         if (removed > 0) {
@@ -473,7 +720,9 @@ function performDrill(point, normal) {
     });
 
     if (totalRemoved > 0) {
-        console.log(`Drilled: removed ${totalRemoved} voxels`);
+        console.log(`Drilled: ${totalRemoved} voxels (R=${radius}, D=${depth}mm)`);
+        // 드릴 후 하이라이트 숨김 (다음 마우스 이동 시 재계산)
+        if (drillHighlight) drillHighlight.visible = false;
         updateModelList();
     }
 }
@@ -878,11 +1127,14 @@ function setupEventListeners() {
         drillSettings.radius = parseFloat(e.target.value);
         document.getElementById('drill-radius-value').textContent = drillSettings.radius;
         updateDrillPreviewSize();
+        updateDrillStatus();
     });
 
     document.getElementById('drill-depth').addEventListener('input', (e) => {
         drillSettings.depth = parseFloat(e.target.value);
         document.getElementById('drill-depth-value').textContent = drillSettings.depth;
+        updateDrillPreviewSize();
+        updateDrillStatus();
     });
 
     // 버튼
@@ -1103,8 +1355,16 @@ function setTool(tool) {
     document.getElementById('current-tool').textContent = tool.charAt(0).toUpperCase() + tool.slice(1);
     document.getElementById('drill-panel').style.display = tool === 'drill' ? 'block' : 'none';
 
+    // 드릴 상태바 표시/숨김
+    const drillStatus = document.getElementById('drill-status');
+    if (drillStatus) {
+        drillStatus.style.display = tool === 'drill' ? 'block' : 'none';
+        updateDrillStatus();
+    }
+
     controls.enabled = (tool === 'navigate');
     drillPreview.visible = false;
+    if (drillHighlight) drillHighlight.visible = false;
 
     // 드릴 모드 진입 시 복셀 초기화
     if (tool === 'drill' && !isDrillInitialized) {
@@ -1115,6 +1375,16 @@ function setTool(tool) {
     if (tool === 'navigate' && isDrillInitialized) {
         // 복셀 메쉬 유지 (드릴링 결과 보존)
     }
+}
+
+/**
+ * 드릴 상태바 정보 업데이트
+ */
+function updateDrillStatus() {
+    const rInfo = document.getElementById('drill-r-info');
+    const dInfo = document.getElementById('drill-d-info');
+    if (rInfo) rInfo.textContent = drillSettings.radius;
+    if (dInfo) dInfo.textContent = drillSettings.depth;
 }
 
 function onMouseMove(event) {
@@ -1129,7 +1399,7 @@ function onMouseMove(event) {
         if (isMouseDown) {
             const intersection = getIntersection();
             if (intersection) {
-                performDrill(intersection.point, intersection.face.normal);
+                performDrill(intersection);
             }
         }
     }
@@ -1147,7 +1417,7 @@ function onMouseDown(event) {
 
         const intersection = getIntersection();
         if (intersection) {
-            performDrill(intersection.point, intersection.face.normal);
+            performDrill(intersection);
         }
     }
 }
@@ -1160,9 +1430,24 @@ function updateDrillPreview() {
     const intersection = getIntersection();
     if (intersection) {
         drillPreview.position.copy(intersection.point);
+
+        // 표면 법선 방향으로 프리뷰 정렬 (Y축을 법선에 맞춤)
+        const normal = intersection.face.normal.clone()
+            .transformDirection(intersection.object.matrixWorld)
+            .normalize();
+        const up = new THREE.Vector3(0, 1, 0);
+        const quaternion = new THREE.Quaternion().setFromUnitVectors(up, normal);
+        drillPreview.quaternion.copy(quaternion);
+
         drillPreview.visible = true;
+
+        // 드릴 영향 범위 복셀 하이라이트 (마우스 버튼 안 누른 상태에서만)
+        if (!isMouseDown) {
+            updateDrillHighlight(intersection);
+        }
     } else {
         drillPreview.visible = false;
+        if (drillHighlight) drillHighlight.visible = false;
     }
 }
 
@@ -1209,6 +1494,9 @@ function updateModelList() {
     }
 
     list.innerHTML = items.join('');
+
+    // 모델 좌표 정보 업데이트
+    updateModelInfo();
 }
 
 // ============================================================================

@@ -451,6 +451,88 @@ class VoxelGrid {
     }
 
     /**
+     * 드릴 영향 범위 프리뷰 - 제거될 복셀 좌표 목록 반환 (실제 제거 안 함)
+     * @param {Vector3} worldPos - 표면 접촉점
+     * @param {Vector3} direction - 드릴 방향 (표면 안쪽, 정규화)
+     * @param {number} radius - 드릴 반지름
+     * @param {number} depth - 드릴 깊이
+     * @returns {Array<{x,y,z}>} 제거될 복셀의 그리드 좌표 배열
+     */
+    previewDrill(worldPos, direction, radius, depth) {
+        const dir = direction.clone().normalize();
+
+        // 드릴 끝점
+        const endPos = new THREE.Vector3(
+            worldPos.x + dir.x * depth,
+            worldPos.y + dir.y * depth,
+            worldPos.z + dir.z * depth
+        );
+
+        // 검색 범위 (원통 바운딩 박스 + radius 여유)
+        const searchMin = this.worldToGrid({
+            x: Math.min(worldPos.x, endPos.x) - radius,
+            y: Math.min(worldPos.y, endPos.y) - radius,
+            z: Math.min(worldPos.z, endPos.z) - radius
+        });
+        const searchMax = this.worldToGrid({
+            x: Math.max(worldPos.x, endPos.x) + radius,
+            y: Math.max(worldPos.y, endPos.y) + radius,
+            z: Math.max(worldPos.z, endPos.z) + radius
+        });
+
+        // 그리드 범위 제한
+        searchMin.x = Math.max(0, searchMin.x);
+        searchMin.y = Math.max(0, searchMin.y);
+        searchMin.z = Math.max(0, searchMin.z);
+        searchMax.x = Math.min(this.gridSize.x - 1, searchMax.x);
+        searchMax.y = Math.min(this.gridSize.y - 1, searchMax.y);
+        searchMax.z = Math.min(this.gridSize.z - 1, searchMax.z);
+
+        const affected = [];
+
+        for (let gz = searchMin.z; gz <= searchMax.z; gz++) {
+            for (let gy = searchMin.y; gy <= searchMax.y; gy++) {
+                for (let gx = searchMin.x; gx <= searchMax.x; gx++) {
+                    if (this.get(gx, gy, gz) !== 1) continue;
+
+                    const cellCenter = this.gridToWorld(gx, gy, gz);
+                    const toCell = new THREE.Vector3().subVectors(cellCenter, worldPos);
+
+                    // 드릴 축 위의 투영 길이
+                    const along = toCell.dot(dir);
+
+                    let inside = false;
+
+                    if (along < 0) {
+                        inside = cellCenter.distanceTo(worldPos) <= radius;
+                    } else if (along > depth) {
+                        inside = cellCenter.distanceTo(endPos) <= radius;
+                    } else {
+                        const projected = dir.clone().multiplyScalar(along);
+                        const perpDist = toCell.clone().sub(projected).length();
+                        inside = perpDist <= radius;
+                    }
+
+                    if (inside) {
+                        affected.push({ x: gx, y: gy, z: gz });
+                    }
+                }
+            }
+        }
+
+        return affected;
+    }
+
+    /**
+     * 캡슐(원통+반구) 형태로 드릴링 - previewDrill 결과를 실제 제거
+     */
+    drillCylinder(worldPos, direction, radius, depth) {
+        const affected = this.previewDrill(worldPos, direction, radius, depth);
+        affected.forEach(pos => this.set(pos.x, pos.y, pos.z, 0));
+        return affected.length;
+    }
+
+    /**
      * Marching Cubes로 메쉬 생성
      */
     toMesh() {

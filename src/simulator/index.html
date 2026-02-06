@@ -221,7 +221,7 @@
                         원본 좌표 유지
                     </label>
                     <label style="display: flex; align-items: center; cursor: pointer; font-size: 12px;">
-                        <input type="checkbox" id="chk-center-origin" style="margin-right: 8px;">
+                        <input type="checkbox" id="chk-center-origin" checked style="margin-right: 8px;">
                         원점 중심 이동
                     </label>
                     <div style="font-size: 10px; color: #888; margin-top: 5px;">
@@ -230,6 +230,7 @@
                 </div>
 
                 <div id="model-list" style="margin-top: 10px; font-size: 12px;"></div>
+                <div id="model-info"></div>
             </div>
 
             <!-- NRRD 설정 패널 -->
@@ -266,6 +267,14 @@
             <div id="status">
                 <div><span class="label">Tool:</span> <span id="current-tool">Navigate</span></div>
                 <div><span class="label">FPS:</span> <span id="fps">60</span></div>
+                <div id="drill-status" style="display: none; margin-top: 4px; padding-top: 4px; border-top: 1px solid #444;">
+                    <span class="label">Drill:</span>
+                    R=<span id="drill-r-info" style="color: #ff4444;">5</span>mm,
+                    D=<span id="drill-d-info" style="color: #ff8800;">10</span>mm
+                    <div style="font-size: 10px; color: #ff2222; margin-top: 2px;">
+                        (hover=preview, click=drill)
+                    </div>
+                </div>
             </div>
         </div>
     </div>
