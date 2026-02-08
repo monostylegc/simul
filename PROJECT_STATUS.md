@@ -5,29 +5,112 @@
 ## 오늘 작업 내역 (2026-02-08)
 
 ### 완료
-1. **SPG (Smoothed Particle Galerkin) 솔버 추가 및 검증** - `src/fea/spg/`
+
+0. **다중 물체 접촉 해석 프레임워크** - `src/fea/framework/`
+   - FEM-FEM, FEM-SPG, SPG-SPG 등 이종 솔버 간 접촉 해석 지원
+   - 노드-노드 페널티 접촉 알고리즘 (KDTree 기반)
+   - **3가지 해석 모드:**
+     - `quasi_static` (기본, 권장): 모든 body 동시 step + 매 스텝 접촉력 갱신 + KE 수렴 판정
+     - `static`: Staggered 정적 (FEM-FEM 전용)
+     - `explicit`: 동기화 명시적 (수렴 체크 없이 n_steps 진행)
+   - **Scene API:**
+     ```python
+     from src.fea.framework import init, create_domain, Material, Method, Scene, ContactType
+     init()
+     bone = create_domain(Method.SPG, dim=2, ...)
+     screw = create_domain(Method.FEM, dim=2, ...)
+     scene = Scene()
+     scene.add(bone, bone_mat)
+     scene.add(screw, screw_mat)
+     scene.add_contact(bone, screw, method=ContactType.PENALTY, penalty=1e8)
+     result = scene.solve(mode="quasi_static")  # 또는 "static", "explicit"
+     u_bone = scene.get_displacements(bone)
+     ```
+   - **신규 파일:**
+     - `contact.py`: ContactType enum, NodeNodeContact 알고리즘
+     - `scene.py`: Scene 클래스, Body 관리, 정적/명시적 멀티바디 솔버
+     - `_adapters/base_adapter.py`: AdapterBase ABC (접촉 인터페이스)
+   - **수정 파일:**
+     - `_adapters/fem_adapter.py`: AdapterBase 상속, 접촉력 inject/clear 추가
+     - `_adapters/pd_adapter.py`: AdapterBase 상속, 접촉력 inject/clear 추가
+     - `_adapters/spg_adapter.py`: AdapterBase 상속, 접촉력 inject/clear 추가
+     - `domain.py`: `select_boundary()` 메서드 추가
+     - `__init__.py`: Scene, ContactType export 추가
+   - **접촉 매개변수 자동 추정:** penalty = E_avg/spacing, gap_tol = 1.5×max_spacing
+   - **테스트: 19개 신규** (접촉 알고리즘 6 + 경계감지 2 + Scene API 4 + FEM-FEM 통합 2 + SPG 준정적 2 + 모드선택 2 + 자동추정 1)
+   - **전체 테스트: 163 passed, 0 failed**
+
+1. **통합 FEA 프레임워크 구현** - `src/fea/framework/`
+   - FEM, Peridynamics, SPG 세 솔버를 동일한 API로 사용 가능
+   - `Method.FEM` / `Method.PD` / `Method.SPG` 전환만으로 솔버 교체
+   - GPU 자동 감지 (Vulkan → CPU 폴백), 정밀도(f32/f64) 설정
+   - **통합 API 예시:**
+     ```python
+     from src.fea.framework import init, create_domain, Material, Solver, Method
+     init()
+     domain = create_domain(Method.FEM, dim=2, origin=(0,0), size=(1.0, 0.2), n_divisions=(50, 10))
+     left = domain.select(axis=0, value=0.0)
+     right = domain.select(axis=0, value=1.0)
+     domain.set_fixed(left)
+     domain.set_force(right, [100.0, 0.0])
+     mat = Material(E=1e6, nu=0.3, density=1000, dim=2)
+     solver = Solver(domain, mat)
+     result = solver.solve()
+     u = solver.get_displacements()
+     ```
+   - **파일 구조:**
+     - `runtime.py`: Taichi 초기화 중앙 관리, GPU 감지, Backend/Precision enum
+     - `domain.py`: create_domain() 팩토리 + Domain 클래스 (select, set_fixed, set_force)
+     - `material.py`: Material 데이터 클래스 (E, nu, density → 솔버별 재료 지연 생성)
+     - `solver.py`: Solver 통합 클래스 (어댑터 자동 선택)
+     - `result.py`: SolveResult 데이터 클래스
+     - `_adapters/`: FEM, PD, SPG 어댑터 (Adapter 패턴, 기존 코드 미수정)
+   - **테스트: 19개 신규 (런타임 3 + 도메인 4 + 재료 2 + FEM 2 + SPG 1 + PD 2 + 교차검증 1 + API 4)**
+   - **전체 테스트: 144 passed, 0 failed (기존 125 + 신규 19)**
+
+2. **레거시 `spine_sim` import 일괄 수정**
+   - 14개 Python 파일에서 `spine_sim.*` → `src.*` import 경로 변환
+   - 불필요 코드 삭제 (spine_sim/, framework/, dead tests 등)
+   - **전체 테스트: 125 passed, 0 skipped, 0 failed**
+
+2. **SPG (Smoothed Particle Galerkin) 솔버 추가 및 검증** - `src/fea/spg/`
    - 극한 변형 및 재료 파괴 해석을 위한 무격자(meshfree) 방법
-   - RKPM 기반 1차 일관성 형상함수 (Cubic B-spline 커널)
-   - 직접 절점 적분 (DNI) + 본드 기반 안정화
-   - 명시적 동적/준정적 솔버 (Velocity Verlet + 운동 감쇠)
-   - 본드 기반 파괴 (신장/소성 변형률 기준)
-   - 선형 탄성 재료 모델
    - **검증 테스트 포함 31개 전부 통과**
 
-   주요 수정 (검증 후 개선):
-   - 형상함수 기울기 보정 (gradient correction): A^{-1}·∇Ψ로 미분 재현 조건 강제
-   - 안정화 상수 스케일링: PD 마이크로 모듈러스 → E/h (Galerkin 강성 대비 적절 비율)
-   - 안정화력 부호 수정: f_int 규약에 맞는 ti.atomic_sub 사용
-   - dt 추정: 형상함수 기울기 기반 spectral radius 추정으로 변경
+3. **FEM 2D 호환성 버그 수정** - `src/fea/fem/material/linear_elastic.py`
+   - `_compute_forces_kernel`에서 3D 하드코딩 (벡터 크기, 루프 범위) → 차원 일반화
+   - `ti.static(self.dim)` 사용으로 2D/3D 모두 지원
+   - `nodes_per_elem` 매개변수 추가 (TET4 4노드 하드코딩 제거)
 
-2. **SPG 기술 문서 작성** - `docs/SPG_METHOD.md`
-   - 수학적 정형화 (약형식, 형상함수, 안정화, 본드 파괴)
-   - 알고리즘 상세
-   - 참고 문헌 7편 (Wu, Guo, Chen et al.)
+4. **FEM 해석해 비교 벤치마크** - `src/fea/fem/tests/benchmark_analytical.py`
+   - 5개 표준 문제로 FEM 솔버의 물리적 정확도 검증
 
-3. **SPG 해석해 비교 벤치마크** - `src/fea/spg/tests/benchmark_analytical.py`
+   | 벤치마크 | 주요 오차 | 평가 |
+   |---------|----------|------|
+   | 균일 인장 봉 (2D QUAD4, 평면응력) | 0.28% | 양호 |
+   | 균일 인장 봉 (3D HEX8) | 0.95% | 양호 |
+   | 외팔보 (2D QUAD4, Timoshenko) | 1.23% | 양호 |
+   | 3D 큐브 압축 (HEX8) | 3.44% | 양호 |
+   | 격자 수렴율 (외팔보) | rate=1.33 | 보통 |
+
+   - 실행: `uv run python src/fea/fem/tests/benchmark_analytical.py`
+
+5. **Peridynamics 해석해 비교 벤치마크** - `src/fea/peridynamics/tests/benchmark_analytical.py`
+   - 5개 표준 문제로 PD 솔버의 물리적 정확도 검증
+
+   | 벤치마크 | 주요 오차 | 평가 |
+   |---------|----------|------|
+   | Bond-based 인장 (2D) | 0.00% | 양호 |
+   | NOSB-PD 인장 (2D) | 0.00% | 양호 |
+   | NOSB-PD 3D 압축 | 0.00% | 양호 |
+   | 에너지 보존 (Explicit) | 133% 변동 | 미흡 |
+   | 격자 수렴율 (F 정확도) | rate=1.26 | 양호 |
+
+   - 에너지 보존 133% 변동: 명시적 솔버의 시간 적분 한계 (향후 개선)
+   - 실행: `uv run python src/fea/peridynamics/tests/benchmark_analytical.py`
+
+6. **SPG 해석해 비교 벤치마크** - `src/fea/spg/tests/benchmark_analytical.py`
    - 5개 표준 문제로 SPG 솔버의 물리적 정확도 검증
-   - 벤치마크 결과 요약:
 
    | 벤치마크 | 주요 오차 | 평가 |
    |---------|----------|------|
@@ -37,9 +120,6 @@
    | 3D 큐브 압축 | 13.2% | 보통 (범위 내) |
    | 격자 수렴율 | rate=1.02 | 양호 |
 
-   - 격자 밀도 증가 시 오차 단조 감소 확인 (h-수렴율 ~1.0)
-   - SPG 메쉬프리 특성상 경계 형상함수 잘림 + 안정화력으로 FEM 대비 큰 오차
-   - 인장/압축 등 균일 응력 문제에서 우수, 굽힘 문제에서 상대적으로 미흡
    - 실행: `uv run python src/fea/spg/tests/benchmark_analytical.py`
 
 ## 이전 작업 내역 (2026-02-06)
@@ -125,10 +205,6 @@
     - 위치 슬라이더 (0~100%)
     - ClippingPlane + 반투명 헬퍼 평면
 
-### 재부팅 후 수동 삭제 필요
-- `spine_sim/` 폴더 (잠김)
-- `web/` 폴더 (잠김)
-
 ## 현재 구현 상태
 
 ### ✅ 완료된 모듈
@@ -146,11 +222,14 @@
 - 50+ FPS 성능
 
 #### FEA (`src/fea/`)
+- **통합 프레임워크**: Method.FEM/PD/SPG 전환만으로 솔버 교체, GPU 자동 감지
 - **FEM**: TET4, TRI3, HEX8, QUAD4 요소
 - **Peridynamics**: NOSB-PD, 준정적 솔버
 - **SPG**: Smoothed Particle Galerkin (극한 변형/파괴 해석)
 - **STL 구조해석**: STL → 복셀화 → Peridynamics 파이프라인
-- 테스트: 77개 통과 (FEM 24 + PD 22 + SPG 31)
+- **다중 물체 접촉 해석**: Scene API, 노드-노드 페널티, 정적/명시적 모드
+- 테스트: 163 passed, 0 failed (FEM 24 + PD 22 + SPG 31 + Framework 19 + Contact 19 + Core 48)
+- 벤치마크: FEM 5개 + PD 5개 + SPG 5개 = 15개 해석해 비교
 
 #### FEA 시각화 (`src/fea/visualization/`)
 - Three.js 기반 웹 뷰어
@@ -185,6 +264,11 @@ src/
 │   └── tests/                # 웹 테스트
 ├── core/                      # 핵심 데이터 구조 (Python)
 └── fea/                       # 유한요소 해석 (Python)
+    ├── framework/             # 통합 API (FEM/PD/SPG 전환, GPU 감지, 접촉 해석)
+    │   ├── _adapters/        # FEM, PD, SPG 어댑터 + base_adapter.py
+    │   ├── contact.py        # 접촉 알고리즘 (노드-노드 페널티)
+    │   ├── scene.py          # 다중 물체 Scene + 접촉 솔버
+    │   └── tests/            # 통합 테스트 (19개) + 접촉 테스트 (15개)
     ├── fem/                   # FEM 모듈
     ├── peridynamics/          # NOSB-PD 모듈
     ├── spg/                   # SPG 모듈 (극한 변형/파괴)
@@ -204,7 +288,6 @@ src/
 - `docs/FEM_PROGRESS.md` - FEM 구현 상세
 - `docs/NOSB_PD_PROGRESS.md` - NOSB-PD 구현 상세
 - `docs/SPG_METHOD.md` - SPG 방법 기술 문서
-- `rough_plan.md` - 전체 프로젝트 계획
 
 ## 실행 방법
 

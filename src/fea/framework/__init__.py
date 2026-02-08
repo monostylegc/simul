@@ -1,37 +1,58 @@
-"""구조 해석 프레임워크.
+"""통합 FEA 프레임워크.
 
-FEM과 Peridynamics를 통합하는 고수준 API.
+FEM, Peridynamics, SPG 세 솔버를 동일한 API로 사용할 수 있다.
+Method만 변경하면 나머지 코드는 동일하게 유지된다.
 
-사용 예시:
-    from spine_sim.analysis.framework import SpineAnalysis
+단일 물체 해석:
+    from src.fea.framework import init, create_domain, Material, Solver, Method
 
-    # 해석 객체 생성
-    analysis = SpineAnalysis()
+    init()
+    domain = create_domain(Method.FEM, dim=2, origin=(0, 0), size=(1.0, 0.2), n_divisions=(50, 10))
 
-    # STL 로드
-    analysis.load_stl("L4.stl", name="L4", material="bone")
-    analysis.load_stl("disc.stl", name="disc", material="disc")
-    analysis.load_stl("L5.stl", name="L5", material="bone")
+    left = domain.select(axis=0, value=0.0)
+    right = domain.select(axis=0, value=1.0)
+    domain.set_fixed(left)
+    domain.set_force(right, [100.0, 0.0])
 
-    # 경계 조건
-    analysis.fix_bottom()
-    analysis.apply_load(top=True, force=-3000)  # N
+    mat = Material(E=1e6, nu=0.3, density=1000, dim=2)
+    solver = Solver(domain, mat)
+    result = solver.solve()
+    u = solver.get_displacements()
 
-    # 해석 실행
-    result = analysis.solve(method="fem")  # 또는 "pd"
+다중 물체 접촉 해석:
+    from src.fea.framework import init, create_domain, Material, Method, Scene, ContactType
 
-    # 시각화
-    result.plot()
-    result.save("result.png")
+    init()
+    bone = create_domain(Method.SPG, dim=2, ...)
+    screw = create_domain(Method.FEM, dim=2, ...)
+
+    scene = Scene()
+    scene.add(bone, bone_mat)
+    scene.add(screw, screw_mat)
+    scene.add_contact(bone, screw, method=ContactType.PENALTY, penalty=1e8)
+    result = scene.solve(mode="static")
 """
 
-from .analysis import SpineAnalysis, AnalysisResult
-from .materials import MaterialLibrary
-from .mesh import MeshGenerator
+from .runtime import init, Backend, Precision, get_backend, get_precision
+from .domain import create_domain, Domain, Method
+from .material import Material
+from .solver import Solver
+from .result import SolveResult
+from .contact import ContactType
+from .scene import Scene
 
 __all__ = [
-    "SpineAnalysis",
-    "AnalysisResult",
-    "MaterialLibrary",
-    "MeshGenerator",
+    "init",
+    "Backend",
+    "Precision",
+    "get_backend",
+    "get_precision",
+    "create_domain",
+    "Domain",
+    "Method",
+    "Material",
+    "Solver",
+    "SolveResult",
+    "ContactType",
+    "Scene",
 ]
