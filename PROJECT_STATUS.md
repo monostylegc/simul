@@ -1,8 +1,48 @@
 # 프로젝트 진행 상황
 
-최종 업데이트: 2026-02-06
+최종 업데이트: 2026-02-08
 
-## 오늘 작업 내역 (2026-02-06)
+## 오늘 작업 내역 (2026-02-08)
+
+### 완료
+1. **SPG (Smoothed Particle Galerkin) 솔버 추가 및 검증** - `src/fea/spg/`
+   - 극한 변형 및 재료 파괴 해석을 위한 무격자(meshfree) 방법
+   - RKPM 기반 1차 일관성 형상함수 (Cubic B-spline 커널)
+   - 직접 절점 적분 (DNI) + 본드 기반 안정화
+   - 명시적 동적/준정적 솔버 (Velocity Verlet + 운동 감쇠)
+   - 본드 기반 파괴 (신장/소성 변형률 기준)
+   - 선형 탄성 재료 모델
+   - **검증 테스트 포함 31개 전부 통과**
+
+   주요 수정 (검증 후 개선):
+   - 형상함수 기울기 보정 (gradient correction): A^{-1}·∇Ψ로 미분 재현 조건 강제
+   - 안정화 상수 스케일링: PD 마이크로 모듈러스 → E/h (Galerkin 강성 대비 적절 비율)
+   - 안정화력 부호 수정: f_int 규약에 맞는 ti.atomic_sub 사용
+   - dt 추정: 형상함수 기울기 기반 spectral radius 추정으로 변경
+
+2. **SPG 기술 문서 작성** - `docs/SPG_METHOD.md`
+   - 수학적 정형화 (약형식, 형상함수, 안정화, 본드 파괴)
+   - 알고리즘 상세
+   - 참고 문헌 7편 (Wu, Guo, Chen et al.)
+
+3. **SPG 해석해 비교 벤치마크** - `src/fea/spg/tests/benchmark_analytical.py`
+   - 5개 표준 문제로 SPG 솔버의 물리적 정확도 검증
+   - 벤치마크 결과 요약:
+
+   | 벤치마크 | 주요 오차 | 평가 |
+   |---------|----------|------|
+   | 균일 인장 봉 | 6.8% | 양호 |
+   | 외팔보 (Cantilever) | 17.3% | 보통 |
+   | 양단 고정 보 (Clamped) | 14.1% | 보통 |
+   | 3D 큐브 압축 | 13.2% | 보통 (범위 내) |
+   | 격자 수렴율 | rate=1.02 | 양호 |
+
+   - 격자 밀도 증가 시 오차 단조 감소 확인 (h-수렴율 ~1.0)
+   - SPG 메쉬프리 특성상 경계 형상함수 잘림 + 안정화력으로 FEM 대비 큰 오차
+   - 인장/압축 등 균일 응력 문제에서 우수, 굽힘 문제에서 상대적으로 미흡
+   - 실행: `uv run python src/fea/spg/tests/benchmark_analytical.py`
+
+## 이전 작업 내역 (2026-02-06)
 
 ### 완료
 1. **모델 좌표 시스템 개선** - `src/simulator/src/main.js`
@@ -108,8 +148,9 @@
 #### FEA (`src/fea/`)
 - **FEM**: TET4, TRI3, HEX8, QUAD4 요소
 - **Peridynamics**: NOSB-PD, 준정적 솔버
+- **SPG**: Smoothed Particle Galerkin (극한 변형/파괴 해석)
 - **STL 구조해석**: STL → 복셀화 → Peridynamics 파이프라인
-- 테스트: 46개 통과
+- 테스트: 77개 통과 (FEM 24 + PD 22 + SPG 31)
 
 #### FEA 시각화 (`src/fea/visualization/`)
 - Three.js 기반 웹 뷰어
@@ -146,6 +187,11 @@ src/
 └── fea/                       # 유한요소 해석 (Python)
     ├── fem/                   # FEM 모듈
     ├── peridynamics/          # NOSB-PD 모듈
+    ├── spg/                   # SPG 모듈 (극한 변형/파괴)
+    │   ├── core/             # 입자, 커널, 본드, 핵심 계산
+    │   ├── solver/           # 명시적 동적/준정적 솔버
+    │   ├── material/         # 재료 모델
+    │   └── tests/            # 테스트 (31개) + 벤치마크
     └── visualization/         # FEA 결과 웹 시각화
         ├── index.html        # FEA Viewer UI
         ├── src/main.js       # Three.js 시각화
@@ -157,6 +203,7 @@ src/
 - `docs/SIMULATOR_PROGRESS.md` - 웹 시뮬레이터 진행 상황
 - `docs/FEM_PROGRESS.md` - FEM 구현 상세
 - `docs/NOSB_PD_PROGRESS.md` - NOSB-PD 구현 상세
+- `docs/SPG_METHOD.md` - SPG 방법 기술 문서
 - `rough_plan.md` - 전체 프로젝트 계획
 
 ## 실행 방법
