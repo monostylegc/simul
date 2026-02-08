@@ -123,18 +123,19 @@ class LinearElastic(MaterialBase):
     def compute_nodal_forces(self, mesh: "FEMesh"):
         """Compute internal nodal forces using B-matrix approach."""
         mesh.f.fill(0)
-        self._compute_forces_kernel_3d(
+        self._compute_forces_kernel(
             mesh.elements,
             mesh.dNdX,
             mesh.stress,
             mesh.gauss_vol,
             mesh.f,
             mesh.n_elements,
-            mesh.n_gauss
+            mesh.n_gauss,
+            mesh.nodes_per_elem
         )
 
     @ti.kernel
-    def _compute_forces_kernel_3d(
+    def _compute_forces_kernel(
         self,
         elements: ti.template(),
         dNdX: ti.template(),
@@ -142,12 +143,14 @@ class LinearElastic(MaterialBase):
         gauss_vol: ti.template(),
         f: ti.template(),
         n_elements: int,
-        n_gauss: int
+        n_gauss: int,
+        nodes_per_elem: int
     ):
-        """Compute internal forces for 3D TET4 elements.
+        """내부 절점력 계산.
 
         f_a = - Σ_gp σ · (dN_a/dX) · w·det(J)
         """
+        dim = ti.static(self.dim)
         for e in range(n_elements):
             for g in range(n_gauss):
                 gp_idx = e * n_gauss + g
@@ -155,13 +158,11 @@ class LinearElastic(MaterialBase):
                 dN = dNdX[gp_idx]
                 vol = gauss_vol[gp_idx]
 
-                # Accumulate force for each node (4 nodes for TET4)
-                for a in ti.static(range(4)):
+                for a in range(nodes_per_elem):
                     node = elements[e][a]
-                    # f_a = -σ · dN_a · vol
-                    f_a = ti.Vector.zero(ti.f32, 3)
-                    for i in ti.static(range(3)):
-                        for j in ti.static(range(3)):
+                    f_a = ti.Vector.zero(ti.f32, dim)
+                    for i in ti.static(range(dim)):
+                        for j in ti.static(range(dim)):
                             f_a[i] -= sigma[i, j] * dN[a, j] * vol
 
                     ti.atomic_add(f[node], f_a)

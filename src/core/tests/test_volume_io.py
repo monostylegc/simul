@@ -98,7 +98,7 @@ class TestVolumeLoader:
 
     def test_load_nrrd(self, sample_nrrd_file):
         """NRRD 파일 로드 테스트."""
-        from spine_sim.core.volume_io import VolumeLoader
+        from src.core.volume_io import VolumeLoader
 
         data, metadata = VolumeLoader.load(sample_nrrd_file)
 
@@ -114,7 +114,7 @@ class TestVolumeLoader:
 
     def test_load_labelmap(self, sample_labelmap_file):
         """Labelmap 로드 테스트."""
-        from spine_sim.core.volume_io import VolumeLoader
+        from src.core.volume_io import VolumeLoader
 
         density, material, metadata = VolumeLoader.load_labelmap(sample_labelmap_file)
 
@@ -130,7 +130,7 @@ class TestVolumeLoader:
 
     def test_anisotropic_spacing_warning(self, anisotropic_nrrd_file):
         """비등방성 spacing 경고 테스트."""
-        from spine_sim.core.volume_io import VolumeLoader
+        from src.core.volume_io import VolumeLoader
 
         with warnings.catch_warnings(record=True) as w:
             warnings.simplefilter("always")
@@ -145,7 +145,7 @@ class TestVolumeLoader:
 
     def test_save_and_reload(self, sample_nrrd_file):
         """저장 및 재로드 테스트."""
-        from spine_sim.core.volume_io import VolumeLoader
+        from src.core.volume_io import VolumeLoader
 
         # 원본 로드
         data_orig, metadata_orig = VolumeLoader.load(sample_nrrd_file)
@@ -167,7 +167,7 @@ class TestVolumeLoader:
 
     def test_downsampling(self, sample_nrrd_file):
         """다운샘플링 테스트."""
-        from spine_sim.core.volume_io import VolumeLoader
+        from src.core.volume_io import VolumeLoader
 
         # 원본 해상도보다 작게 요청
         data, metadata = VolumeLoader.load(sample_nrrd_file, max_resolution=16)
@@ -187,7 +187,7 @@ class TestVoxelVolumeIO:
         import taichi as ti
         ti.init(arch=ti.cpu, offline_cache=False)
 
-        from spine_sim.core.volume import VoxelVolume
+        from src.core.volume import VoxelVolume
 
         volume = VoxelVolume.load(sample_nrrd_file)
 
@@ -204,7 +204,7 @@ class TestVoxelVolumeIO:
         import taichi as ti
         ti.init(arch=ti.cpu, offline_cache=False)
 
-        from spine_sim.core.volume import VoxelVolume
+        from src.core.volume import VoxelVolume
 
         volume = VoxelVolume.load_labelmap(sample_labelmap_file)
 
@@ -218,7 +218,7 @@ class TestVoxelVolumeIO:
         import taichi as ti
         ti.init(arch=ti.cpu, offline_cache=False)
 
-        from spine_sim.core.volume import VoxelVolume
+        from src.core.volume import VoxelVolume
 
         # 로드
         volume = VoxelVolume.load(sample_nrrd_file)
@@ -247,7 +247,7 @@ class TestVolumeMetadata:
 
     def test_is_isotropic(self):
         """등방성 확인 테스트."""
-        from spine_sim.core.volume_io import VolumeMetadata
+        from src.core.volume_io import VolumeMetadata
 
         # 등방성
         meta1 = VolumeMetadata(
@@ -269,7 +269,7 @@ class TestVolumeMetadata:
 
     def test_min_spacing(self):
         """최소 spacing 테스트."""
-        from spine_sim.core.volume_io import VolumeMetadata
+        from src.core.volume_io import VolumeMetadata
 
         meta = VolumeMetadata(
             origin=(0, 0, 0),

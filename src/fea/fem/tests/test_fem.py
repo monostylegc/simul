@@ -10,7 +10,7 @@ ti.init(arch=ti.cpu, default_fp=ti.f32)
 
 def test_element_types():
     """Test element type definitions."""
-    from spine_sim.analysis.fem.core.element import (
+    from src.fea.fem.core.element import (
         ElementType, get_element_info, get_shape_derivatives_tet4
     )
 
@@ -29,8 +29,8 @@ def test_element_types():
 
 def test_mesh_creation():
     """Test mesh data structure creation."""
-    from spine_sim.analysis.fem.core.mesh import FEMesh
-    from spine_sim.analysis.fem.core.element import ElementType
+    from src.fea.fem.core.mesh import FEMesh
+    from src.fea.fem.core.element import ElementType
 
     # Simple tetrahedron
     nodes = np.array([
@@ -61,7 +61,7 @@ def test_mesh_creation():
 
 def test_linear_elastic_material():
     """Test linear elastic material properties."""
-    from spine_sim.analysis.fem.material.linear_elastic import LinearElastic
+    from src.fea.fem.material.linear_elastic import LinearElastic
 
     E = 1e6
     nu = 0.3
@@ -82,7 +82,7 @@ def test_linear_elastic_material():
 
 def test_neo_hookean_material():
     """Test Neo-Hookean material."""
-    from spine_sim.analysis.fem.material.neo_hookean import NeoHookean
+    from src.fea.fem.material.neo_hookean import NeoHookean
 
     E = 1e6
     nu = 0.3
@@ -93,7 +93,7 @@ def test_neo_hookean_material():
     assert not mat.is_linear
 
     # Initial elasticity tensor should match linear elastic
-    from spine_sim.analysis.fem.material.linear_elastic import LinearElastic
+    from src.fea.fem.material.linear_elastic import LinearElastic
     lin_mat = LinearElastic(E, nu, dim=3)
 
     C_neo = mat.get_elasticity_tensor()
@@ -104,10 +104,10 @@ def test_neo_hookean_material():
 
 def test_solver_linear_tet():
     """Test linear solver on simple tension problem."""
-    from spine_sim.analysis.fem.core.mesh import FEMesh
-    from spine_sim.analysis.fem.core.element import ElementType
-    from spine_sim.analysis.fem.material.linear_elastic import LinearElastic
-    from spine_sim.analysis.fem.solver.static_solver import StaticSolver
+    from src.fea.fem.core.mesh import FEMesh
+    from src.fea.fem.core.element import ElementType
+    from src.fea.fem.material.linear_elastic import LinearElastic
+    from src.fea.fem.solver.static_solver import StaticSolver
 
     # 2-element mesh (two tetrahedra sharing a face)
     nodes = np.array([
@@ -148,9 +148,9 @@ def test_solver_linear_tet():
 
 def test_2d_triangle():
     """Test 2D triangular element."""
-    from spine_sim.analysis.fem.core.mesh import FEMesh
-    from spine_sim.analysis.fem.core.element import ElementType
-    from spine_sim.analysis.fem.material.linear_elastic import LinearElastic
+    from src.fea.fem.core.mesh import FEMesh
+    from src.fea.fem.core.element import ElementType
+    from src.fea.fem.material.linear_elastic import LinearElastic
 
     # Simple triangle
     nodes = np.array([

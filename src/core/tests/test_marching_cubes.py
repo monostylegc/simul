@@ -17,8 +17,8 @@ class TestMarchingCubes:
 
     def test_empty_volume(self):
         """빈 볼륨에서는 메쉬가 생성되지 않아야 함."""
-        from spine_sim.core.volume import VoxelVolume
-        from spine_sim.core.marching_cubes import MarchingCubes
+        from src.core.volume import VoxelVolume
+        from src.core.marching_cubes import MarchingCubes
 
         volume = VoxelVolume(resolution=(8, 8, 8), spacing=1.0)
         mc = MarchingCubes()
@@ -30,8 +30,8 @@ class TestMarchingCubes:
 
     def test_sphere_extraction(self):
         """구 형태 복셀에서 메쉬 추출."""
-        from spine_sim.core.volume import VoxelVolume
-        from spine_sim.core.marching_cubes import MarchingCubes
+        from src.core.volume import VoxelVolume
+        from src.core.marching_cubes import MarchingCubes
 
         volume = VoxelVolume(resolution=(32, 32, 32), origin=(-16, -16, -16), spacing=1.0)
         # 중심에 반지름 8인 구 생성
@@ -52,8 +52,8 @@ class TestMarchingCubes:
 
     def test_box_extraction(self):
         """박스 형태 복셀에서 메쉬 추출."""
-        from spine_sim.core.volume import VoxelVolume
-        from spine_sim.core.marching_cubes import MarchingCubes
+        from src.core.volume import VoxelVolume
+        from src.core.marching_cubes import MarchingCubes
 
         volume = VoxelVolume(resolution=(16, 16, 16), origin=(0, 0, 0), spacing=1.0)
         # 박스 채우기 (4,4,4) ~ (12,12,12)
@@ -71,8 +71,8 @@ class TestMarchingCubes:
 
     def test_drilling_updates_mesh(self):
         """드릴링 후 메쉬가 업데이트되어야 함."""
-        from spine_sim.core.volume import VoxelVolume
-        from spine_sim.core.marching_cubes import MarchingCubes
+        from src.core.volume import VoxelVolume
+        from src.core.marching_cubes import MarchingCubes
 
         volume = VoxelVolume(resolution=(32, 32, 32), origin=(-16, -16, -16), spacing=1.0)
         volume.fill_sphere(0, 0, 0, 10, 1.0, 1)
@@ -96,7 +96,7 @@ class TestMarchingCubes:
 
     def test_volume_extract_mesh_method(self):
         """VoxelVolume.extract_mesh() 메서드 테스트."""
-        from spine_sim.core.volume import VoxelVolume
+        from src.core.volume import VoxelVolume
 
         volume = VoxelVolume(resolution=(16, 16, 16), origin=(-8, -8, -8), spacing=1.0)
         volume.fill_sphere(0, 0, 0, 5, 1.0, 1)
@@ -110,7 +110,7 @@ class TestMarchingCubes:
 
     def test_create_mesh_from_volume(self):
         """VoxelVolume.create_mesh_from_volume() 메서드 테스트."""
-        from spine_sim.core.volume import VoxelVolume
+        from src.core.volume import VoxelVolume
 
         volume = VoxelVolume(resolution=(16, 16, 16), origin=(-8, -8, -8), spacing=1.0)
         volume.fill_sphere(0, 0, 0, 5, 1.0, 1)
@@ -123,8 +123,8 @@ class TestMarchingCubes:
 
     def test_normals_direction(self):
         """법선 벡터가 대체로 외부를 향해야 함."""
-        from spine_sim.core.volume import VoxelVolume
-        from spine_sim.core.marching_cubes import MarchingCubes
+        from src.core.volume import VoxelVolume
+        from src.core.marching_cubes import MarchingCubes
 
         volume = VoxelVolume(resolution=(32, 32, 32), origin=(-16, -16, -16), spacing=1.0)
         volume.fill_sphere(0, 0, 0, 8, 1.0, 1)

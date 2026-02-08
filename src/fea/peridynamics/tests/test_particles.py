@@ -16,7 +16,7 @@ class TestParticleSystem:
 
     def test_initialization(self):
         """Test basic initialization."""
-        from spine_sim.analysis.peridynamics.core.particles import ParticleSystem
+        from src.fea.peridynamics.core.particles import ParticleSystem
 
         n = 100
         ps = ParticleSystem(n, dim=2)
@@ -26,7 +26,7 @@ class TestParticleSystem:
 
     def test_grid_initialization(self):
         """Test initialization from grid."""
-        from spine_sim.analysis.peridynamics.core.particles import ParticleSystem
+        from src.fea.peridynamics.core.particles import ParticleSystem
 
         nx, ny = 5, 4
         n = nx * ny
@@ -45,7 +45,7 @@ class TestParticleSystem:
 
     def test_fixed_particles(self):
         """Test setting fixed particles."""
-        from spine_sim.analysis.peridynamics.core.particles import ParticleSystem
+        from src.fea.peridynamics.core.particles import ParticleSystem
 
         n = 20
         ps = ParticleSystem(n, dim=2)
@@ -62,7 +62,7 @@ class TestParticleSystem:
 
     def test_displacement(self):
         """Test displacement computation."""
-        from spine_sim.analysis.peridynamics.core.particles import ParticleSystem
+        from src.fea.peridynamics.core.particles import ParticleSystem
 
         n = 4
         ps = ParticleSystem(n, dim=2)
@@ -83,8 +83,8 @@ class TestNeighborSearch:
 
     def test_basic_neighbor_search(self):
         """Test basic neighbor finding."""
-        from spine_sim.analysis.peridynamics.core.particles import ParticleSystem
-        from spine_sim.analysis.peridynamics.core.neighbor import NeighborSearch
+        from src.fea.peridynamics.core.particles import ParticleSystem
+        from src.fea.peridynamics.core.neighbor import NeighborSearch
 
         # Create 3x3 grid
         n = 9
@@ -120,8 +120,8 @@ class TestNeighborSearch:
 
     def test_horizon_cutoff(self):
         """Test that horizon is respected."""
-        from spine_sim.analysis.peridynamics.core.particles import ParticleSystem
-        from spine_sim.analysis.peridynamics.core.neighbor import NeighborSearch
+        from src.fea.peridynamics.core.particles import ParticleSystem
+        from src.fea.peridynamics.core.neighbor import NeighborSearch
 
         n = 4
         spacing = 1.0
@@ -151,9 +151,9 @@ class TestBondSystem:
 
     def test_bond_creation(self):
         """Test bond creation from neighbor search."""
-        from spine_sim.analysis.peridynamics.core.particles import ParticleSystem
-        from spine_sim.analysis.peridynamics.core.neighbor import NeighborSearch
-        from spine_sim.analysis.peridynamics.core.bonds import BondSystem
+        from src.fea.peridynamics.core.particles import ParticleSystem
+        from src.fea.peridynamics.core.neighbor import NeighborSearch
+        from src.fea.peridynamics.core.bonds import BondSystem
 
         n = 9
         spacing = 1.0
@@ -186,7 +186,7 @@ class TestDamageModel:
 
     def test_critical_stretch_computation(self):
         """Test critical stretch formula."""
-        from spine_sim.analysis.peridynamics.core.damage import DamageModel
+        from src.fea.peridynamics.core.damage import DamageModel
 
         E = 70e9  # 70 GPa
         G_c = 1000  # J/m^2
@@ -204,7 +204,7 @@ class TestDamageModel:
 
     def test_bone_critical_stretch(self):
         """Test bone material critical stretch."""
-        from spine_sim.analysis.peridynamics.core.damage import DamageModel
+        from src.fea.peridynamics.core.damage import DamageModel
 
         horizon = 0.003
 
@@ -223,7 +223,7 @@ class TestExplicitSolver:
 
     def test_stable_dt_estimation(self):
         """Test stable time step estimation."""
-        from spine_sim.analysis.peridynamics.solver.explicit import ExplicitSolver
+        from src.fea.peridynamics.solver.explicit import ExplicitSolver
 
         E = 70e9
         rho = 2700
@@ -241,11 +241,11 @@ class TestExplicitSolver:
 
     def test_energy_conservation(self):
         """Test approximate energy conservation (no damping)."""
-        from spine_sim.analysis.peridynamics.core.particles import ParticleSystem
-        from spine_sim.analysis.peridynamics.core.neighbor import NeighborSearch
-        from spine_sim.analysis.peridynamics.core.bonds import BondSystem
-        from spine_sim.analysis.peridynamics.solver.explicit import ExplicitSolver
-        from spine_sim.analysis.peridynamics.material.linear_elastic import LinearElasticMaterial
+        from src.fea.peridynamics.core.particles import ParticleSystem
+        from src.fea.peridynamics.core.neighbor import NeighborSearch
+        from src.fea.peridynamics.core.bonds import BondSystem
+        from src.fea.peridynamics.solver.explicit import ExplicitSolver
+        from src.fea.peridynamics.material.linear_elastic import LinearElasticMaterial
 
         # Small system for testing
         n = 9

@@ -19,7 +19,7 @@ class Test3DGridInitialization:
 
     def test_3d_grid_creation(self):
         """3D 격자 생성 테스트."""
-        from spine_sim.analysis.peridynamics.core.particles import ParticleSystem
+        from src.fea.peridynamics.core.particles import ParticleSystem
 
         nx, ny, nz = 3, 3, 3
         n = nx * ny * nz
@@ -40,7 +40,7 @@ class Test3DGridInitialization:
 
     def test_3d_particle_volume(self):
         """3D 입자 부피 테스트."""
-        from spine_sim.analysis.peridynamics.core.particles import ParticleSystem
+        from src.fea.peridynamics.core.particles import ParticleSystem
 
         nx, ny, nz = 2, 2, 2
         n = nx * ny * nz
@@ -66,8 +66,8 @@ class Test3DNeighborSearch:
 
     def test_3d_neighbor_count(self):
         """3D 이웃 수 테스트 (직접 이웃만)."""
-        from spine_sim.analysis.peridynamics.core.particles import ParticleSystem
-        from spine_sim.analysis.peridynamics.core.neighbor import NeighborSearch
+        from src.fea.peridynamics.core.particles import ParticleSystem
+        from src.fea.peridynamics.core.neighbor import NeighborSearch
 
         # 3x3x3 격자
         nx, ny, nz = 3, 3, 3
@@ -103,8 +103,8 @@ class Test3DNeighborSearch:
 
     def test_3d_diagonal_neighbors(self):
         """3D 대각선 이웃 포함 테스트."""
-        from spine_sim.analysis.peridynamics.core.particles import ParticleSystem
-        from spine_sim.analysis.peridynamics.core.neighbor import NeighborSearch
+        from src.fea.peridynamics.core.particles import ParticleSystem
+        from src.fea.peridynamics.core.neighbor import NeighborSearch
 
         # 3x3x3 격자
         nx, ny, nz = 3, 3, 3
@@ -143,9 +143,9 @@ class Test3DBondSystem:
 
     def test_3d_bond_creation(self):
         """3D 본드 생성 테스트."""
-        from spine_sim.analysis.peridynamics.core.particles import ParticleSystem
-        from spine_sim.analysis.peridynamics.core.neighbor import NeighborSearch
-        from spine_sim.analysis.peridynamics.core.bonds import BondSystem
+        from src.fea.peridynamics.core.particles import ParticleSystem
+        from src.fea.peridynamics.core.neighbor import NeighborSearch
+        from src.fea.peridynamics.core.bonds import BondSystem
 
         nx, ny, nz = 2, 2, 2
         n = nx * ny * nz
@@ -178,9 +178,9 @@ class Test3DBondSystem:
 
     def test_3d_bond_vectors(self):
         """3D 본드 벡터 테스트."""
-        from spine_sim.analysis.peridynamics.core.particles import ParticleSystem
-        from spine_sim.analysis.peridynamics.core.neighbor import NeighborSearch
-        from spine_sim.analysis.peridynamics.core.bonds import BondSystem
+        from src.fea.peridynamics.core.particles import ParticleSystem
+        from src.fea.peridynamics.core.neighbor import NeighborSearch
+        from src.fea.peridynamics.core.bonds import BondSystem
 
         nx, ny, nz = 2, 2, 2
         n = nx * ny * nz
@@ -218,10 +218,10 @@ class Test3DNOSBShapeTensor:
 
     def test_3d_shape_tensor_symmetry(self):
         """Shape tensor 대칭성 테스트."""
-        from spine_sim.analysis.peridynamics.core.particles import ParticleSystem
-        from spine_sim.analysis.peridynamics.core.neighbor import NeighborSearch
-        from spine_sim.analysis.peridynamics.core.bonds import BondSystem
-        from spine_sim.analysis.peridynamics.core.nosb import NOSBCompute
+        from src.fea.peridynamics.core.particles import ParticleSystem
+        from src.fea.peridynamics.core.neighbor import NeighborSearch
+        from src.fea.peridynamics.core.bonds import BondSystem
+        from src.fea.peridynamics.core.nosb import NOSBCompute
 
         nx, ny, nz = 3, 3, 3
         n = nx * ny * nz
@@ -255,10 +255,10 @@ class Test3DNOSBShapeTensor:
 
     def test_3d_shape_tensor_positive_definite(self):
         """Shape tensor 양정치성 테스트 (중심 입자)."""
-        from spine_sim.analysis.peridynamics.core.particles import ParticleSystem
-        from spine_sim.analysis.peridynamics.core.neighbor import NeighborSearch
-        from spine_sim.analysis.peridynamics.core.bonds import BondSystem
-        from spine_sim.analysis.peridynamics.core.nosb import NOSBCompute
+        from src.fea.peridynamics.core.particles import ParticleSystem
+        from src.fea.peridynamics.core.neighbor import NeighborSearch
+        from src.fea.peridynamics.core.bonds import BondSystem
+        from src.fea.peridynamics.core.nosb import NOSBCompute
 
         nx, ny, nz = 3, 3, 3
         n = nx * ny * nz
@@ -292,10 +292,10 @@ class Test3DNOSBShapeTensor:
 
     def test_3d_deformation_gradient_identity(self):
         """변형 없을 때 F = I 테스트."""
-        from spine_sim.analysis.peridynamics.core.particles import ParticleSystem
-        from spine_sim.analysis.peridynamics.core.neighbor import NeighborSearch
-        from spine_sim.analysis.peridynamics.core.bonds import BondSystem
-        from spine_sim.analysis.peridynamics.core.nosb import NOSBCompute
+        from src.fea.peridynamics.core.particles import ParticleSystem
+        from src.fea.peridynamics.core.neighbor import NeighborSearch
+        from src.fea.peridynamics.core.bonds import BondSystem
+        from src.fea.peridynamics.core.nosb import NOSBCompute
 
         nx, ny, nz = 3, 3, 3
         n = nx * ny * nz
@@ -337,9 +337,9 @@ class Test3DQuasiStaticCompression:
 
     def test_3d_compression_displacement(self):
         """3D 압축 시 변위 방향 테스트 (고정 입자만 검증)."""
-        from spine_sim.analysis.peridynamics.core.particles import ParticleSystem
-        from spine_sim.analysis.peridynamics.core.neighbor import NeighborSearch
-        from spine_sim.analysis.peridynamics.core.bonds import BondSystem
+        from src.fea.peridynamics.core.particles import ParticleSystem
+        from src.fea.peridynamics.core.neighbor import NeighborSearch
+        from src.fea.peridynamics.core.bonds import BondSystem
 
         # 2x2x2 격자 - 간단한 설정
         nx, ny, nz = 2, 2, 2
@@ -391,10 +391,10 @@ class Test3DQuasiStaticCompression:
 
     def test_3d_solver_stability(self):
         """3D 솔버 안정성 테스트 (에너지 발산 없음)."""
-        from spine_sim.analysis.peridynamics.core.particles import ParticleSystem
-        from spine_sim.analysis.peridynamics.core.neighbor import NeighborSearch
-        from spine_sim.analysis.peridynamics.core.bonds import BondSystem
-        from spine_sim.analysis.peridynamics.solver.quasi_static import QuasiStaticSolver
+        from src.fea.peridynamics.core.particles import ParticleSystem
+        from src.fea.peridynamics.core.neighbor import NeighborSearch
+        from src.fea.peridynamics.core.bonds import BondSystem
+        from src.fea.peridynamics.solver.quasi_static import QuasiStaticSolver
 
         nx, ny, nz = 2, 2, 2
         n = nx * ny * nz

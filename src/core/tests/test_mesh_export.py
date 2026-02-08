@@ -5,7 +5,7 @@ import numpy as np
 import tempfile
 from pathlib import Path
 
-from spine_sim.core.mesh import TriangleMesh
+from src.core.mesh import TriangleMesh
 
 
 class TestMeshExport:

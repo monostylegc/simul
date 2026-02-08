@@ -19,7 +19,7 @@ class TestQUAD4ShapeFunctions:
 
     def test_shape_function_sum(self):
         """형상함수 합 = 1 테스트 (파티션 오브 유니티)."""
-        from spine_sim.analysis.fem.core.element import get_shape_functions_quad4
+        from src.fea.fem.core.element import get_shape_functions_quad4
 
         # 여러 점에서 테스트
         test_points = [
@@ -38,7 +38,7 @@ class TestQUAD4ShapeFunctions:
 
     def test_shape_function_at_nodes(self):
         """노드에서 형상함수 값 테스트 (Kronecker delta)."""
-        from spine_sim.analysis.fem.core.element import get_shape_functions_quad4, QUAD4_NODE_COORDS
+        from src.fea.fem.core.element import get_shape_functions_quad4, QUAD4_NODE_COORDS
 
         for i in range(4):
             xi, eta = QUAD4_NODE_COORDS[i]
@@ -51,7 +51,7 @@ class TestQUAD4ShapeFunctions:
 
     def test_shape_derivatives_sum(self):
         """형상함수 미분 합 = 0 테스트."""
-        from spine_sim.analysis.fem.core.element import get_shape_derivatives_quad4
+        from src.fea.fem.core.element import get_shape_derivatives_quad4
 
         test_points = [
             (0, 0),
@@ -72,7 +72,7 @@ class TestQUAD4GaussPoints:
 
     def test_gauss_points_count(self):
         """Gauss점 개수 테스트."""
-        from spine_sim.analysis.fem.core.element import get_gauss_points_quad4
+        from src.fea.fem.core.element import get_gauss_points_quad4
 
         points, weights = get_gauss_points_quad4()
 
@@ -81,7 +81,7 @@ class TestQUAD4GaussPoints:
 
     def test_gauss_weights_sum(self):
         """Gauss 가중치 합 테스트 (기준 사각형 면적 = 4)."""
-        from spine_sim.analysis.fem.core.element import get_gauss_points_quad4
+        from src.fea.fem.core.element import get_gauss_points_quad4
 
         points, weights = get_gauss_points_quad4()
 
@@ -95,8 +95,8 @@ class TestQUAD4Mesh:
 
     def test_unit_square_area(self):
         """단위 정사각형 면적 테스트."""
-        from spine_sim.analysis.fem.core.mesh import FEMesh
-        from spine_sim.analysis.fem.core.element import ElementType
+        from src.fea.fem.core.mesh import FEMesh
+        from src.fea.fem.core.element import ElementType
 
         # 단위 정사각형 노드 (0~1 범위)
         nodes = np.array([
@@ -121,8 +121,8 @@ class TestQUAD4Mesh:
 
     def test_scaled_rectangle_area(self):
         """크기 조절된 직사각형 면적 테스트."""
-        from spine_sim.analysis.fem.core.mesh import FEMesh
-        from spine_sim.analysis.fem.core.element import ElementType
+        from src.fea.fem.core.mesh import FEMesh
+        from src.fea.fem.core.element import ElementType
 
         # 2x3 직사각형
         L, W = 2.0, 3.0
@@ -151,8 +151,8 @@ class TestQUAD4Mesh:
 
     def test_deformation_gradient_identity(self):
         """변형 없을 때 F = I 테스트."""
-        from spine_sim.analysis.fem.core.mesh import FEMesh
-        from spine_sim.analysis.fem.core.element import ElementType
+        from src.fea.fem.core.mesh import FEMesh
+        from src.fea.fem.core.element import ElementType
 
         nodes = np.array([
             [0.0, 0.0],
@@ -182,8 +182,8 @@ class TestQUAD4Mesh2x2:
 
     def test_2x2_mesh_creation(self):
         """2x2 메쉬 생성 및 총 면적 테스트."""
-        from spine_sim.analysis.fem.core.mesh import FEMesh
-        from spine_sim.analysis.fem.core.element import ElementType
+        from src.fea.fem.core.mesh import FEMesh
+        from src.fea.fem.core.element import ElementType
 
         # 2x2 메쉬 (4개 사각형)
         # 노드 생성: 3x3 = 9개

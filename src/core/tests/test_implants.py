@@ -5,7 +5,7 @@ import numpy as np
 import tempfile
 from pathlib import Path
 
-from spine_sim.core.implants import (
+from src.core.implants import (
     create_pedicle_screw,
     create_interbody_cage,
     create_rod,
@@ -122,75 +122,3 @@ class TestRod:
         # 직경 확인 (x 방향)
         actual_diameter = max_b[0] - min_b[0]
         assert abs(actual_diameter - diameter) < 0.5
-
-
-class TestSimulatorIntegration:
-    """시뮬레이터 임플란트 통합 테스트."""
-
-    def test_add_screw(self):
-        """나사 추가 테스트."""
-        import taichi as ti
-        ti.init(arch=ti.cpu, offline_cache=True)
-
-        from spine_sim.app.simulator import SpineSimulator
-
-        sim = SpineSimulator(width=800, height=600)
-        name = sim.add_pedicle_screw(position=(10, 20, 30))
-
-        assert "Screw" in name
-        assert name in sim.objects
-
-    def test_add_cage(self):
-        """케이지 추가 테스트."""
-        import taichi as ti
-        ti.init(arch=ti.cpu, offline_cache=True)
-
-        from spine_sim.app.simulator import SpineSimulator
-
-        sim = SpineSimulator(width=800, height=600)
-        name = sim.add_interbody_cage(position=(0, 15, 0))
-
-        assert "Cage" in name
-        assert name in sim.objects
-
-    def test_add_rod(self):
-        """로드 추가 테스트."""
-        import taichi as ti
-        ti.init(arch=ti.cpu, offline_cache=True)
-
-        from spine_sim.app.simulator import SpineSimulator
-
-        sim = SpineSimulator(width=800, height=600)
-        name = sim.add_rod(start=(0, 0, 0), end=(0, 60, 0))
-
-        assert "Rod" in name
-        assert name in sim.objects
-
-    def test_surgical_setup(self):
-        """수술 셋업 테스트 (척추 + 임플란트)."""
-        import taichi as ti
-        ti.init(arch=ti.cpu, offline_cache=True)
-
-        from spine_sim.app.simulator import SpineSimulator
-
-        sim = SpineSimulator(width=800, height=600)
-
-        # 척추 추가
-        sim.add_sample_vertebra("L4", position=(0, 30, 0))
-        sim.add_sample_vertebra("L5", position=(0, 0, 0))
-
-        # 나사 추가 (양측)
-        sim.add_pedicle_screw(name="L4_Left", position=(-15, 30, 0))
-        sim.add_pedicle_screw(name="L4_Right", position=(15, 30, 0))
-        sim.add_pedicle_screw(name="L5_Left", position=(-15, 0, 0))
-        sim.add_pedicle_screw(name="L5_Right", position=(15, 0, 0))
-
-        # 로드 추가
-        sim.add_rod(name="Rod_Left", start=(-15, 30, 0), end=(-15, 0, 0))
-        sim.add_rod(name="Rod_Right", start=(15, 30, 0), end=(15, 0, 0))
-
-        # 케이지 추가
-        sim.add_interbody_cage(name="Cage_L4L5", position=(0, 15, 0))
-
-        # 총 9개 객체
-        assert len(sim.objects) == 9

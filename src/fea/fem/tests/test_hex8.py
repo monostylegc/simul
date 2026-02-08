@@ -19,7 +19,7 @@ class TestHEX8ShapeFunctions:
 
     def test_shape_function_sum(self):
         """형상함수 합 = 1 테스트 (파티션 오브 유니티)."""
-        from spine_sim.analysis.fem.core.element import get_shape_functions_hex8
+        from src.fea.fem.core.element import get_shape_functions_hex8
 
         # 여러 점에서 테스트
         test_points = [
@@ -37,7 +37,7 @@ class TestHEX8ShapeFunctions:
 
     def test_shape_function_at_nodes(self):
         """노드에서 형상함수 값 테스트 (Kronecker delta)."""
-        from spine_sim.analysis.fem.core.element import get_shape_functions_hex8, HEX8_NODE_COORDS
+        from src.fea.fem.core.element import get_shape_functions_hex8, HEX8_NODE_COORDS
 
         for i in range(8):
             xi, eta, zeta = HEX8_NODE_COORDS[i]
@@ -50,7 +50,7 @@ class TestHEX8ShapeFunctions:
 
     def test_shape_derivatives_sum(self):
         """형상함수 미분 합 = 0 테스트."""
-        from spine_sim.analysis.fem.core.element import get_shape_derivatives_hex8
+        from src.fea.fem.core.element import get_shape_derivatives_hex8
 
         test_points = [
             (0, 0, 0),
@@ -71,7 +71,7 @@ class TestHEX8GaussPoints:
 
     def test_gauss_points_count(self):
         """Gauss점 개수 테스트."""
-        from spine_sim.analysis.fem.core.element import get_gauss_points_hex8
+        from src.fea.fem.core.element import get_gauss_points_hex8
 
         points, weights = get_gauss_points_hex8()
 
@@ -80,7 +80,7 @@ class TestHEX8GaussPoints:
 
     def test_gauss_weights_sum(self):
         """Gauss 가중치 합 테스트 (기준 육면체 부피 = 8)."""
-        from spine_sim.analysis.fem.core.element import get_gauss_points_hex8
+        from src.fea.fem.core.element import get_gauss_points_hex8
 
         points, weights = get_gauss_points_hex8()
 
@@ -94,8 +94,8 @@ class TestHEX8Mesh:
 
     def test_unit_cube_volume(self):
         """단위 정육면체 부피 테스트."""
-        from spine_sim.analysis.fem.core.mesh import FEMesh
-        from spine_sim.analysis.fem.core.element import ElementType
+        from src.fea.fem.core.mesh import FEMesh
+        from src.fea.fem.core.element import ElementType
 
         # 단위 정육면체 노드 (0~1 범위)
         nodes = np.array([
@@ -124,8 +124,8 @@ class TestHEX8Mesh:
 
     def test_scaled_cube_volume(self):
         """크기 조절된 정육면체 부피 테스트."""
-        from spine_sim.analysis.fem.core.mesh import FEMesh
-        from spine_sim.analysis.fem.core.element import ElementType
+        from src.fea.fem.core.mesh import FEMesh
+        from src.fea.fem.core.element import ElementType
 
         # 2x3x4 직육면체
         L, W, H = 2.0, 3.0, 4.0
@@ -158,8 +158,8 @@ class TestHEX8Mesh:
 
     def test_deformation_gradient_identity(self):
         """변형 없을 때 F = I 테스트."""
-        from spine_sim.analysis.fem.core.mesh import FEMesh
-        from spine_sim.analysis.fem.core.element import ElementType
+        from src.fea.fem.core.mesh import FEMesh
+        from src.fea.fem.core.element import ElementType
 
         nodes = np.array([
             [0.0, 0.0, 0.0],
@@ -193,10 +193,10 @@ class TestHEX8Solver:
 
     def test_compression_direction(self):
         """압축 시 변위 방향 테스트."""
-        from spine_sim.analysis.fem.core.mesh import FEMesh
-        from spine_sim.analysis.fem.core.element import ElementType
-        from spine_sim.analysis.fem.material.linear_elastic import LinearElastic
-        from spine_sim.analysis.fem.solver.static_solver import StaticSolver
+        from src.fea.fem.core.mesh import FEMesh
+        from src.fea.fem.core.element import ElementType
+        from src.fea.fem.material.linear_elastic import LinearElastic
+        from src.fea.fem.solver.static_solver import StaticSolver
 
         # 2x2x2 메쉬 (8개 육면체)
         # 노드 생성: 3x3x3 = 27개

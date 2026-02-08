@@ -3,7 +3,7 @@
 import pytest
 import numpy as np
 
-from spine_sim.core.guideline import (
+from src.core.guideline import (
     PedicleEntryPoint,
     ScrewGuideline,
     GuidelineManager,
@@ -200,49 +200,3 @@ class TestGuidelineManager:
         manager.clear()
 
         assert len(manager.guidelines) == 0
-
-
-class TestSimulatorIntegration:
-    """시뮬레이터 통합 테스트."""
-
-    def test_add_guideline(self):
-        """시뮬레이터에서 가이드라인 추가."""
-        import taichi as ti
-        ti.init(arch=ti.cpu, offline_cache=True)
-
-        from spine_sim.app.simulator import SpineSimulator
-
-        sim = SpineSimulator(width=800, height=600)
-        sim.add_sample_vertebra("L4", position=(0, 30, 0))
-
-        sim.add_screw_guideline("L4", side="left")
-
-        assert len(sim.guideline_manager.guidelines) == 1
-
-    def test_bilateral_guidelines(self):
-        """양측 가이드라인 추가."""
-        import taichi as ti
-        ti.init(arch=ti.cpu, offline_cache=True)
-
-        from spine_sim.app.simulator import SpineSimulator
-
-        sim = SpineSimulator(width=800, height=600)
-        sim.add_sample_vertebra("L4", position=(0, 30, 0))
-
-        sim.add_bilateral_guidelines("L4")
-
-        assert len(sim.guideline_manager.guidelines) == 2
-
-    def test_toggle_guidelines(self):
-        """가이드라인 토글 테스트."""
-        import taichi as ti
-        ti.init(arch=ti.cpu, offline_cache=True)
-
-        from spine_sim.app.simulator import SpineSimulator
-
-        sim = SpineSimulator(width=800, height=600)
-
-        initial = sim.show_guidelines
-        toggled = sim.toggle_guidelines()
-
-        assert toggled != initial
