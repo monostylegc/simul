@@ -116,9 +116,7 @@
             <!-- 도구 패널 -->
             <div class="panel">
                 <h3>Tools</h3>
-                <button class="tool-btn active" data-tool="navigate">Navigate</button>
                 <button class="tool-btn" data-tool="drill">Drill (Eraser)</button>
-                <button class="tool-btn" data-tool="measure">Measure</button>
             </div>
 
             <!-- Undo/Redo 패널 -->
@@ -137,35 +135,6 @@
                 </div>
             </div>
 
-            <!-- 단면 뷰 패널 -->
-            <div class="panel">
-                <h3>Slice View</h3>
-                <button class="tool-btn" id="btn-slice-view">Toggle Slice</button>
-            </div>
-
-            <!-- 단면 설정 패널 (숨김) -->
-            <div class="panel" id="slice-panel" style="display: none;">
-                <h3>Slice Settings</h3>
-                <div style="margin-bottom: 10px;">
-                    <label style="font-size: 12px; color: #aaa;">Axis</label>
-                    <div style="display: flex; gap: 5px; margin-top: 5px;">
-                        <button class="tool-btn" data-slice-axis="x" style="flex: 1; padding: 8px;">
-                            X (Sagittal)
-                        </button>
-                        <button class="tool-btn" data-slice-axis="y" style="flex: 1; padding: 8px;">
-                            Y (Coronal)
-                        </button>
-                        <button class="tool-btn active" data-slice-axis="z" style="flex: 1; padding: 8px;">
-                            Z (Axial)
-                        </button>
-                    </div>
-                </div>
-                <div class="slider-container">
-                    <label>Position</label>
-                    <input type="range" id="slice-position" min="0" max="1" value="0.5" step="0.01">
-                    <div class="slider-value"><span id="slice-position-value">50%</span></div>
-                </div>
-            </div>
 
             <!-- 복셀 해상도 설정 -->
             <div class="panel">
@@ -190,10 +159,8 @@
                     <input type="range" id="drill-radius" min="1" max="15" value="5">
                     <div class="slider-value"><span id="drill-radius-value">5</span> mm</div>
                 </div>
-                <div class="slider-container">
-                    <label>Depth</label>
-                    <input type="range" id="drill-depth" min="1" max="30" value="10">
-                    <div class="slider-value"><span id="drill-depth-value">10</span> mm</div>
+                <div style="font-size: 11px; color: #888; margin-top: 5px; padding: 4px;">
+                    Shape: Sphere (마우스 위치에서 구체로 깎기)
                 </div>
             </div>
 
@@ -265,12 +232,12 @@
 
         <div id="canvas-container">
             <div id="status">
-                <div><span class="label">Tool:</span> <span id="current-tool">Navigate</span></div>
+                <div><span class="label">Tool:</span> <span id="current-tool">None</span></div>
                 <div><span class="label">FPS:</span> <span id="fps">60</span></div>
                 <div id="drill-status" style="display: none; margin-top: 4px; padding-top: 4px; border-top: 1px solid #444;">
                     <span class="label">Drill:</span>
-                    R=<span id="drill-r-info" style="color: #ff4444;">5</span>mm,
-                    D=<span id="drill-d-info" style="color: #ff8800;">10</span>mm
+                    R=<span id="drill-r-info" style="color: #4fc3f7;">5</span>mm
+                    (<span id="drill-d-info" style="color: #ff8800;">0 voxels</span>)
                     <div style="font-size: 10px; color: #ff2222; margin-top: 2px;">
                         (hover=preview, click=drill)
                     </div>

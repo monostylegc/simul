@@ -1,8 +1,33 @@
 # 프로젝트 진행 상황
 
-최종 업데이트: 2026-02-08
+최종 업데이트: 2026-02-12
 
-## 오늘 작업 내역 (2026-02-08)
+## 오늘 작업 내역 (2026-02-12)
+
+### 완료
+
+1. **드릴을 구체(Sphere) 방식으로 변경** - `src/simulator/src/voxel.js`, `src/simulator/src/main.js`
+   - 기존 캡슐(원통+반구) 드릴 → 구체(Sphere) 드릴로 전환
+   - `previewDrill(worldPos, radius)`: 구체 범위 내 영향 복셀 프리뷰
+   - `drillWithSphere(worldPos, radius)`: 구체로 실제 복셀 제거
+   - 드릴 프리뷰: 회색 반투명 구체 (`0xaaaaaa`, opacity 0.35)
+   - Depth 파라미터/슬라이더 제거 (구체는 radius만 필요)
+
+2. **CAD 스타일 네비게이션으로 변경** - `src/simulator/src/main.js`
+   - Navigate 도구 제거 → 네비게이션은 항상 기본 탑재
+   - 우클릭 드래그 = 회전 (항상), 중클릭 드래그 = 팬 (항상), 스크롤 = 줌 (항상)
+   - 좌클릭 = 도구 없으면 회전, 도구 있으면 도구 사용
+   - 도구 토글 방식 (같은 버튼 다시 클릭 시 해제)
+
+3. **불필요한 UI 기능 제거** - `src/simulator/index.html`, `src/simulator/src/main.js`
+   - Slice View (단면 뷰) 전체 제거: HTML 패널 + JS 함수 (~240줄)
+   - Measure 버튼 제거 (미구현 상태였음)
+
+4. **드릴 클릭 버그 수정** - `src/simulator/src/main.js`
+   - 원인: OrbitControls가 `pointerdown`에서 `preventDefault()` 호출 → `mousedown` 이벤트 차단
+   - 수정: 이벤트 리스너를 `mousedown/move/up` → `pointerdown/move/up`으로 변경
+
+## 이전 작업 내역 (2026-02-08)
 
 ### 완료
 
@@ -212,10 +237,10 @@
 #### 웹 시뮬레이터 (`src/simulator/`)
 - STL 로딩 (L4, L5 척추)
 - NRRD 로딩 (3D Slicer 호환)
-- 복셀 기반 드릴링 + Marching Cubes
+- 복셀 기반 구체 드릴링 + Marching Cubes
 - 해상도 조절 UI (32~192)
 - **Undo/Redo** (Ctrl+Z/Y, 최대 30단계)
-- **단면 뷰 (Slice View)** - X/Y/Z 축 단면 + 위치 조절
+- **CAD 스타일 네비게이션** - 우클릭=회전, 중클릭=팬, 휠=줌 (항상 활성)
 - **좌표 시스템 개선** - 원본 좌표 유지 + 자동 원점 중심 배치
 - **동적 그리드** - 모델 크기에 맞게 자동 조절
 - **모델 정보 UI** - 크기/중심/범위 실시간 표시
@@ -247,7 +272,6 @@
 
 ### 🔲 미구현
 - 내시경 시뮬레이션 (웹 버전으로 새로 구현 예정)
-- Measure 도구 (웹)
 - 임플란트 배치 (나사/케이지)
 
 ## 모듈 구조

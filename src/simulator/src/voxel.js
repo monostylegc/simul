@@ -451,33 +451,22 @@ class VoxelGrid {
     }
 
     /**
-     * 드릴 영향 범위 프리뷰 - 제거될 복셀 좌표 목록 반환 (실제 제거 안 함)
-     * @param {Vector3} worldPos - 표면 접촉점
-     * @param {Vector3} direction - 드릴 방향 (표면 안쪽, 정규화)
-     * @param {number} radius - 드릴 반지름
-     * @param {number} depth - 드릴 깊이
+     * 구체 드릴 영향 범위 프리뷰 - 제거될 복셀 좌표 목록 반환 (실제 제거 안 함)
+     * @param {Vector3} worldPos - 구체 중심점 (월드 좌표)
+     * @param {number} radius - 구체 반지름
      * @returns {Array<{x,y,z}>} 제거될 복셀의 그리드 좌표 배열
      */
-    previewDrill(worldPos, direction, radius, depth) {
-        const dir = direction.clone().normalize();
-
-        // 드릴 끝점
-        const endPos = new THREE.Vector3(
-            worldPos.x + dir.x * depth,
-            worldPos.y + dir.y * depth,
-            worldPos.z + dir.z * depth
-        );
-
-        // 검색 범위 (원통 바운딩 박스 + radius 여유)
+    previewDrill(worldPos, radius) {
+        // 검색 범위 (구체 바운딩 박스)
         const searchMin = this.worldToGrid({
-            x: Math.min(worldPos.x, endPos.x) - radius,
-            y: Math.min(worldPos.y, endPos.y) - radius,
-            z: Math.min(worldPos.z, endPos.z) - radius
+            x: worldPos.x - radius,
+            y: worldPos.y - radius,
+            z: worldPos.z - radius
         });
         const searchMax = this.worldToGrid({
-            x: Math.max(worldPos.x, endPos.x) + radius,
-            y: Math.max(worldPos.y, endPos.y) + radius,
-            z: Math.max(worldPos.z, endPos.z) + radius
+            x: worldPos.x + radius,
+            y: worldPos.y + radius,
+            z: worldPos.z + radius
         });
 
         // 그리드 범위 제한
@@ -496,24 +485,9 @@ class VoxelGrid {
                     if (this.get(gx, gy, gz) !== 1) continue;
 
                     const cellCenter = this.gridToWorld(gx, gy, gz);
-                    const toCell = new THREE.Vector3().subVectors(cellCenter, worldPos);
+                    const dist = cellCenter.distanceTo(worldPos);
 
-                    // 드릴 축 위의 투영 길이
-                    const along = toCell.dot(dir);
-
-                    let inside = false;
-
-                    if (along < 0) {
-                        inside = cellCenter.distanceTo(worldPos) <= radius;
-                    } else if (along > depth) {
-                        inside = cellCenter.distanceTo(endPos) <= radius;
-                    } else {
-                        const projected = dir.clone().multiplyScalar(along);
-                        const perpDist = toCell.clone().sub(projected).length();
-                        inside = perpDist <= radius;
-                    }
-
-                    if (inside) {
+                    if (dist <= radius) {
                         affected.push({ x: gx, y: gy, z: gz });
                     }
                 }
@@ -524,10 +498,10 @@ class VoxelGrid {
     }
 
     /**
-     * 캡슐(원통+반구) 형태로 드릴링 - previewDrill 결과를 실제 제거
+     * 구체 형태로 드릴링 - previewDrill 결과를 실제 제거
      */
-    drillCylinder(worldPos, direction, radius, depth) {
-        const affected = this.previewDrill(worldPos, direction, radius, depth);
+    drillWithSphere(worldPos, radius) {
+        const affected = this.previewDrill(worldPos, radius);
         affected.forEach(pos => this.set(pos.x, pos.y, pos.z, 0));
         return affected.length;
     }
