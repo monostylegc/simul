@@ -5,100 +5,203 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Spine Surgery Simulator</title>
     <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
             font-family: 'Segoe UI', sans-serif;
             overflow: hidden;
-            background: #1a1a2e;
-        }
-        #container {
-            width: 100vw;
-            height: 100vh;
+            background: #f0f0f0;
             display: flex;
+            flex-direction: column;
+            height: 100vh;
         }
-        #sidebar {
-            width: 280px;
-            background: #16213e;
-            padding: 20px;
-            color: #eee;
-            overflow-y: auto;
+
+        /* ── 메뉴바 (탭 바) ── */
+        #menubar {
+            height: 36px;
+            background: #ffffff;
+            display: flex;
+            align-items: center;
+            padding: 0 12px;
+            border-bottom: 1px solid #d0d0d0;
+            flex-shrink: 0;
+            z-index: 100;
+        }
+        #menubar-logo {
+            color: #1976d2;
+            font-weight: bold;
+            font-size: 14px;
+            margin-right: 16px;
+            letter-spacing: 1px;
+        }
+
+        /* 탭 버튼 */
+        #tab-group {
+            display: flex;
+            gap: 0;
+            height: 100%;
+        }
+        .tab-btn {
+            background: transparent;
+            color: #666;
+            border: none;
+            border-bottom: 2px solid transparent;
+            padding: 0 14px;
+            font-size: 12px;
+            cursor: pointer;
+            transition: all 0.15s;
+            height: 100%;
+            display: flex;
+            align-items: center;
+        }
+        .tab-btn:hover {
+            color: #333;
+            background: #f4f4f4;
+        }
+        .tab-btn.active {
+            color: #1976d2;
+            border-bottom-color: #1976d2;
+            font-weight: 600;
+        }
+
+        /* Undo/Redo 아이콘 버튼 */
+        .icon-btn {
+            background: transparent;
+            border: 1px solid #d0d0d0;
+            border-radius: 4px;
+            width: 28px;
+            height: 28px;
+            font-size: 14px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: #555;
+        }
+        .icon-btn:hover { background: #e8e8e8; color: #333; }
+        .icon-btn:disabled { opacity: 0.35; cursor: default; }
+        .icon-btn:disabled:hover { background: transparent; color: #555; }
+
+        .menubar-sep {
+            width: 1px;
+            height: 20px;
+            background: #d0d0d0;
+            margin: 0 8px;
+            flex-shrink: 0;
+        }
+
+        /* 메뉴바 우측 */
+        #menubar-right {
+            margin-left: auto;
+            display: flex;
+            gap: 4px;
+            align-items: center;
+        }
+
+        /* ── 메인 컨테이너 ── */
+        #container {
+            flex: 1;
+            display: flex;
+            overflow: hidden;
         }
         #canvas-container {
             flex: 1;
             position: relative;
         }
-        canvas {
-            display: block;
+        canvas { display: block; }
+
+        /* ── 우측 사이드바 ── */
+        #sidebar {
+            width: 260px;
+            background: #fafafa;
+            padding: 12px;
+            color: #333;
+            overflow-y: auto;
+            border-left: 1px solid #d0d0d0;
+            flex-shrink: 0;
         }
 
-        /* UI 스타일 */
-        .panel {
-            background: #1a1a2e;
-            border-radius: 8px;
-            padding: 15px;
-            margin-bottom: 15px;
-        }
-        .panel h3 {
-            color: #4fc3f7;
+        /* 사이드바 패널 */
+        .prop-panel h3 {
+            color: #1976d2;
             margin-bottom: 10px;
-            font-size: 14px;
+            font-size: 13px;
             text-transform: uppercase;
             letter-spacing: 1px;
+            padding-bottom: 6px;
+            border-bottom: 1px solid rgba(25, 118, 210, 0.2);
         }
+        .prop-section {
+            margin-bottom: 12px;
+            padding: 10px;
+            background: #ffffff;
+            border: 1px solid #e8e8e8;
+            border-radius: 6px;
+        }
+        .prop-section-title {
+            font-size: 11px;
+            color: #1976d2;
+            margin-bottom: 6px;
+            font-weight: bold;
+        }
+
+        /* 공용 UI 요소 */
         .tool-btn {
             width: 100%;
-            padding: 10px;
-            margin: 5px 0;
+            padding: 8px;
+            margin: 4px 0;
             border: none;
-            border-radius: 5px;
-            background: #0f3460;
+            border-radius: 4px;
+            background: #1976d2;
             color: #fff;
             cursor: pointer;
             transition: all 0.2s;
+            font-size: 12px;
         }
-        .tool-btn:hover {
-            background: #1a5276;
-        }
-        .tool-btn.active {
-            background: #e94560;
-        }
+        .tool-btn:hover { background: #1565c0; }
+        .tool-btn.active { background: #e53935; }
+        .tool-btn:disabled { opacity: 0.5; cursor: default; }
 
-        .slider-container {
-            margin: 10px 0;
-        }
+        .slider-container { margin: 8px 0; }
         .slider-container label {
             display: block;
-            margin-bottom: 5px;
-            font-size: 12px;
-            color: #aaa;
+            margin-bottom: 4px;
+            font-size: 11px;
+            color: #666;
         }
-        .slider-container input[type="range"] {
+        .slider-container input[type="range"] { width: 100%; }
+        .slider-value { text-align: right; font-size: 11px; color: #1976d2; }
+
+        select.prop-select {
             width: 100%;
-        }
-        .slider-value {
-            text-align: right;
-            font-size: 12px;
-            color: #4fc3f7;
+            padding: 6px;
+            background: #fff;
+            color: #333;
+            border: 1px solid #bbb;
+            border-radius: 4px;
+            font-size: 11px;
         }
 
-        /* 상태 표시 */
-        #status {
-            position: absolute;
-            top: 10px;
-            left: 10px;
-            background: rgba(0,0,0,0.7);
-            color: #fff;
-            padding: 10px 15px;
-            border-radius: 5px;
-            font-size: 12px;
+        /* ── 상태바 ── */
+        #statusbar {
+            height: 26px;
+            background: #ffffff;
+            color: #666;
+            display: flex;
+            align-items: center;
+            padding: 0 16px;
+            font-size: 11px;
+            gap: 16px;
+            border-top: 1px solid #d0d0d0;
+            flex-shrink: 0;
         }
-        #status .label {
-            color: #888;
+        #statusbar .st-label { color: #888; }
+        #statusbar .st-value { color: #1976d2; }
+        #statusbar .st-sep {
+            width: 1px;
+            height: 14px;
+            background: #d0d0d0;
         }
+        #drill-status { display: none; }
 
         /* 드릴 커서 */
         #drill-cursor {
@@ -109,85 +212,57 @@
     </style>
 </head>
 <body>
+    <!-- ── 상단 탭 바 ── -->
+    <div id="menubar">
+        <span id="menubar-logo">Spine Simulator</span>
+
+        <div id="tab-group">
+            <button class="tab-btn active" data-tab="file">File</button>
+            <button class="tab-btn" data-tab="modeling">Modeling</button>
+            <button class="tab-btn" data-tab="preprocess">Pre-process</button>
+            <button class="tab-btn" data-tab="solve">Solve</button>
+            <button class="tab-btn" data-tab="postprocess">Post-process</button>
+            <button class="tab-btn" data-tab="view">View</button>
+        </div>
+
+        <div id="menubar-right">
+            <button class="icon-btn" id="btn-undo-top" title="Undo (Ctrl+Z)" disabled>&#8617;</button>
+            <button class="icon-btn" id="btn-redo-top" title="Redo (Ctrl+Y)" disabled>&#8618;</button>
+        </div>
+    </div>
+
+    <!-- ── 메인 컨테이너 ── -->
     <div id="container">
+        <div id="canvas-container"></div>
+
+        <!-- 우측 속성 패널 -->
         <div id="sidebar">
-            <h2 style="color: #4fc3f7; margin-bottom: 20px;">Spine Simulator</h2>
 
-            <!-- 도구 패널 -->
-            <div class="panel">
-                <h3>Tools</h3>
-                <button class="tool-btn" data-tool="drill">Drill (Eraser)</button>
-            </div>
-
-            <!-- Undo/Redo 패널 -->
-            <div class="panel">
-                <h3>History</h3>
-                <div style="display: flex; gap: 10px;">
-                    <button class="tool-btn" id="btn-undo" style="flex: 1;" disabled>
-                        Undo (<span id="undo-count">0</span>)
-                    </button>
-                    <button class="tool-btn" id="btn-redo" style="flex: 1;" disabled>
-                        Redo (<span id="redo-count">0</span>)
-                    </button>
+            <!-- ====== File 패널 ====== -->
+            <div class="prop-panel" id="panel-file">
+                <h3>File</h3>
+                <!-- 모델 목록 -->
+                <div class="prop-section">
+                    <div class="prop-section-title">Models</div>
+                    <div id="model-list" style="font-size: 12px;"></div>
+                    <div id="model-info"></div>
                 </div>
-                <div style="font-size: 11px; color: #888; margin-top: 5px;">
-                    Ctrl+Z / Ctrl+Y
+                <!-- Import 버튼 -->
+                <div class="prop-section">
+                    <div class="prop-section-title">Import</div>
+                    <button class="tool-btn" id="btn-load-sample">Load Sample (L4+L5+Disc)</button>
+                    <button class="tool-btn" id="btn-load-stl" style="background: #757575;">Load STL...</button>
+                    <button class="tool-btn" id="btn-load-nrrd" style="background: #757575;">Load NRRD...</button>
+                    <button class="tool-btn" id="btn-clear-all" style="background: #e53935;">Clear All</button>
                 </div>
-            </div>
-
-
-            <!-- 복셀 해상도 설정 -->
-            <div class="panel">
-                <h3>Voxel Resolution</h3>
-                <div class="slider-container">
-                    <label>Resolution (STL 복셀화)</label>
-                    <input type="range" id="voxel-resolution" min="32" max="192" value="64" step="16">
-                    <div class="slider-value"><span id="voxel-resolution-value">64</span>³</div>
-                </div>
-                <div style="font-size: 11px; color: #888; margin-top: 5px;">
-                    높을수록 정밀, 느림<br>
-                    32: 빠름 | 64: 권장 | 128+: 고품질
-                </div>
-                <button class="tool-btn" id="btn-revoxelize" style="margin-top: 10px;">Re-voxelize (해상도 적용)</button>
-            </div>
-
-            <!-- 드릴 설정 -->
-            <div class="panel" id="drill-panel" style="display: none;">
-                <h3>Drill Settings</h3>
-                <div class="slider-container">
-                    <label>Radius</label>
-                    <input type="range" id="drill-radius" min="1" max="15" value="5">
-                    <div class="slider-value"><span id="drill-radius-value">5</span> mm</div>
-                </div>
-                <div style="font-size: 11px; color: #888; margin-top: 5px; padding: 4px;">
-                    Shape: Sphere (마우스 위치에서 구체로 깎기)
-                </div>
-            </div>
-
-            <!-- 모델 패널 -->
-            <div class="panel">
-                <h3>Models</h3>
-                <button class="tool-btn" id="btn-load-sample">Load Sample (L4+L5+Disc)</button>
-
-                <!-- 파일 선택 영역 -->
-                <div id="drop-zone" style="margin: 10px 0; padding: 20px; border: 2px dashed #4fc3f7; border-radius: 8px; text-align: center; cursor: pointer; transition: all 0.2s;">
-                    <div style="font-size: 24px; margin-bottom: 5px;">📁</div>
-                    <div style="font-size: 12px; color: #aaa;">STL 파일을 드래그하거나<br>클릭하여 선택</div>
-                    <div style="font-size: 10px; color: #666; margin-top: 5px;">(여러 파일 선택 가능)</div>
-                </div>
-                <input type="file" id="file-input" accept=".stl,.STL" style="display: none;" multiple>
-
-                <button class="tool-btn" id="btn-load-nrrd">Load NRRD (3D Slicer)</button>
-                <input type="file" id="nrrd-input" accept=".nrrd,.nhdr" style="display: none;">
-                <button class="tool-btn" id="btn-clear-all">Clear All</button>
-
                 <!-- 좌표 설정 -->
-                <div style="margin-top: 10px; padding: 10px; background: rgba(0,0,0,0.2); border-radius: 5px;">
-                    <label style="display: flex; align-items: center; cursor: pointer; font-size: 12px; margin-bottom: 5px;">
+                <div class="prop-section">
+                    <div class="prop-section-title">좌표 설정</div>
+                    <label style="display: flex; align-items: center; cursor: pointer; font-size: 11px; margin-bottom: 5px;">
                         <input type="checkbox" id="chk-keep-position" checked style="margin-right: 8px;">
                         원본 좌표 유지
                     </label>
-                    <label style="display: flex; align-items: center; cursor: pointer; font-size: 12px;">
+                    <label style="display: flex; align-items: center; cursor: pointer; font-size: 11px;">
                         <input type="checkbox" id="chk-center-origin" checked style="margin-right: 8px;">
                         원점 중심 이동
                     </label>
@@ -195,56 +270,300 @@
                         3D Slicer 파일은 "원본 좌표 유지" 권장
                     </div>
                 </div>
-
-                <div id="model-list" style="margin-top: 10px; font-size: 12px;"></div>
-                <div id="model-info"></div>
+                <!-- NRRD 설정 (기본 숨김, NRRD 로드 시 표시) -->
+                <div id="nrrd-settings-section" style="display: none;">
+                    <div class="prop-section">
+                        <div class="prop-section-title">NRRD Settings</div>
+                        <div class="slider-container">
+                            <label>Target Resolution</label>
+                            <input type="range" id="nrrd-resolution" min="32" max="256" value="128" step="16">
+                            <div class="slider-value"><span id="nrrd-resolution-value">128</span>³</div>
+                        </div>
+                        <div style="font-size: 10px; color: #888; margin-top: 4px;">
+                            원본보다 높으면 업샘플링<br>
+                            원본보다 낮으면 다운샘플링
+                        </div>
+                        <div id="nrrd-info" style="font-size: 11px; color: #1976d2; margin: 6px 0; padding: 5px; background: #e3f2fd; border-radius: 4px;"></div>
+                    </div>
+                    <div class="prop-section">
+                        <div class="slider-container">
+                            <label>Threshold (CT 볼륨용)</label>
+                            <input type="range" id="nrrd-threshold" min="0" max="1" value="0.3" step="0.05">
+                            <div class="slider-value"><span id="nrrd-threshold-value">0.30</span></div>
+                        </div>
+                    </div>
+                    <button class="tool-btn" id="btn-apply-nrrd">Apply & Generate Mesh</button>
+                </div>
             </div>
 
-            <!-- NRRD 설정 패널 -->
-            <div class="panel" id="nrrd-panel" style="display: none;">
-                <h3>NRRD Settings</h3>
-                <div class="slider-container">
-                    <label>Target Resolution</label>
-                    <input type="range" id="nrrd-resolution" min="32" max="256" value="128" step="16">
-                    <div class="slider-value"><span id="nrrd-resolution-value">128</span>³</div>
+            <!-- ====== Modeling 패널 ====== -->
+            <div class="prop-panel" id="panel-modeling" style="display:none;">
+                <h3>Modeling</h3>
+                <!-- 드릴 토글 -->
+                <div class="prop-section">
+                    <button class="tool-btn" id="btn-toggle-drill">Drill: ON</button>
                 </div>
-                <div style="font-size: 11px; color: #888; margin-top: 5px;">
-                    원본보다 높으면 업샘플링 (부드러움)<br>
-                    원본보다 낮으면 다운샘플링 (빠름)
+                <!-- 드릴 반경 -->
+                <div class="prop-section">
+                    <div class="slider-container">
+                        <label>Radius</label>
+                        <input type="range" id="drill-radius" min="1" max="15" value="5">
+                        <div class="slider-value"><span id="drill-radius-value">5</span> mm</div>
+                    </div>
                 </div>
-                <div id="nrrd-info" style="font-size: 11px; color: #4fc3f7; margin: 8px 0; padding: 5px; background: rgba(0,0,0,0.3); border-radius: 4px;"></div>
-                <div class="slider-container">
-                    <label>Threshold (CT 볼륨용)</label>
-                    <input type="range" id="nrrd-threshold" min="0" max="1" value="0.3" step="0.05">
-                    <div class="slider-value"><span id="nrrd-threshold-value">0.30</span></div>
+                <!-- Voxel Resolution -->
+                <div class="prop-section">
+                    <div class="prop-section-title">Voxel Resolution</div>
+                    <div class="slider-container">
+                        <label>Resolution (STL 복셀화)</label>
+                        <input type="range" id="voxel-resolution" min="32" max="192" value="64" step="16">
+                        <div class="slider-value"><span id="voxel-resolution-value">64</span>³</div>
+                    </div>
+                    <div style="font-size: 10px; color: #888; margin-top: 4px;">
+                        32: 빠름 | 64: 권장 | 128+: 고품질
+                    </div>
+                    <button class="tool-btn" id="btn-revoxelize" style="margin-top: 6px;">Re-voxelize</button>
                 </div>
-                <button class="tool-btn" id="btn-apply-nrrd">Apply & Generate Mesh</button>
-            </div>
-
-            <!-- 뷰 패널 -->
-            <div class="panel">
-                <h3>View</h3>
-                <button class="tool-btn" id="btn-reset-view">Reset View</button>
-                <button class="tool-btn" id="btn-top-view">Top View</button>
-                <button class="tool-btn" id="btn-front-view">Front View</button>
-            </div>
-        </div>
-
-        <div id="canvas-container">
-            <div id="status">
-                <div><span class="label">Tool:</span> <span id="current-tool">None</span></div>
-                <div><span class="label">FPS:</span> <span id="fps">60</span></div>
-                <div id="drill-status" style="display: none; margin-top: 4px; padding-top: 4px; border-top: 1px solid #444;">
-                    <span class="label">Drill:</span>
-                    R=<span id="drill-r-info" style="color: #4fc3f7;">5</span>mm
-                    (<span id="drill-d-info" style="color: #ff8800;">0 voxels</span>)
-                    <div style="font-size: 10px; color: #ff2222; margin-top: 2px;">
-                        (hover=preview, click=drill)
+                <!-- 드릴 안내 -->
+                <div class="prop-section">
+                    <div style="font-size: 11px; color: #888;">
+                        Shape: Sphere (구체로 깎기)<br>
+                        Hover=미리보기, Click=드릴
+                    </div>
+                </div>
+                <!-- History (Undo/Redo) -->
+                <div class="prop-section">
+                    <div class="prop-section-title">History</div>
+                    <div style="display: flex; gap: 6px;">
+                        <button class="tool-btn" id="btn-undo" style="flex: 1;" disabled>
+                            Undo (<span id="undo-count">0</span>)
+                        </button>
+                        <button class="tool-btn" id="btn-redo" style="flex: 1;" disabled>
+                            Redo (<span id="redo-count">0</span>)
+                        </button>
                     </div>
                 </div>
             </div>
+
+            <!-- ====== Pre-process 패널 ====== -->
+            <div class="prop-panel" id="panel-preprocess" style="display:none;">
+                <h3>Pre-process</h3>
+                <!-- 브러쉬 선택 (공용) -->
+                <div class="prop-section">
+                    <div class="prop-section-title">브러쉬 선택</div>
+                    <div class="slider-container">
+                        <label>브러쉬 반경</label>
+                        <input type="range" id="bc-brush-radius" min="1" max="15" value="5">
+                        <div class="slider-value"><span id="bc-brush-radius-value">5</span> mm</div>
+                    </div>
+                    <div style="font-size: 10px; color: #888; margin-top: 4px;">Click/Drag=칠하기</div>
+                    <div style="font-size: 11px; color: #1976d2; margin-top: 6px;">
+                        선택 복셀: <span id="bc-selection-count">0</span>개
+                    </div>
+                    <button class="tool-btn" id="btn-clear-selection" style="margin-top: 4px;">선택 해제</button>
+                </div>
+                <!-- Step 1: Fixed BC -->
+                <div class="prop-section" style="border-left: 3px solid #00cc44;">
+                    <div class="prop-section-title" style="color: #00cc44;">Step 1: Fixed BC</div>
+                    <div style="font-size: 10px; color: #888; margin-bottom: 6px;">
+                        고정할 영역을 브러쉬로 선택 후 적용
+                    </div>
+                    <button class="tool-btn" id="btn-apply-fixed" style="background: #00cc44;">Fixed BC 적용</button>
+                </div>
+                <!-- Step 2: Force BC -->
+                <div class="prop-section" style="border-left: 3px solid #ff2222;">
+                    <div class="prop-section-title" style="color: #ff2222;">Step 2: Force BC</div>
+                    <div style="font-size: 10px; color: #888; margin-bottom: 6px;">
+                        하중 영역 선택 → 방향 설정 → 적용
+                    </div>
+                    <div class="slider-container">
+                        <label>크기 (N)</label>
+                        <input type="range" id="force-magnitude" min="1" max="1000" value="100" step="1">
+                        <div class="slider-value"><span id="force-magnitude-value">100</span> N</div>
+                    </div>
+                    <div style="font-size: 11px; color: #666; margin-top: 4px;">
+                        방향: <span id="force-direction-display">(0.00, -1.00, 0.00)</span>
+                    </div>
+                    <div style="font-size: 10px; color: #888; margin-top: 4px;">Ctrl+드래그로 방향 회전</div>
+                    <button class="tool-btn" id="btn-reset-force-dir" style="margin-top: 4px; background: #757575;">방향 리셋 (-Y)</button>
+                    <button class="tool-btn" id="btn-apply-force" style="background: #ff2222; margin-top: 4px;">Force BC 적용</button>
+                </div>
+                <!-- BC 관리 -->
+                <div class="prop-section">
+                    <button class="tool-btn" id="btn-clear-bc" style="background: #757575;">BC 모두 제거</button>
+                </div>
+                <!-- Step 3: 재료 설정 -->
+                <div class="prop-section" style="border-left: 3px solid #1976d2;">
+                    <div class="prop-section-title">Step 3: 재료 설정</div>
+                    <div class="slider-container">
+                        <label>대상</label>
+                        <select id="material-target" class="prop-select">
+                            <option value="__all__">전체</option>
+                        </select>
+                    </div>
+                    <div class="slider-container">
+                        <label>프리셋</label>
+                        <select id="material-preset" class="prop-select">
+                            <option value="bone">Bone (15 GPa)</option>
+                            <option value="disc">Disc (10 MPa)</option>
+                            <option value="ligament">Ligament (50 MPa)</option>
+                            <option value="titanium">Titanium (110 GPa)</option>
+                        </select>
+                    </div>
+                    <button class="tool-btn" id="btn-assign-material" style="margin-top: 4px;">재료 적용</button>
+                </div>
+            </div>
+
+            <!-- ====== Solve 패널 ====== -->
+            <div class="prop-panel" id="panel-solve" style="display:none;">
+                <h3>Solve</h3>
+                <!-- 서버 상태 -->
+                <div class="prop-section">
+                    <div style="font-size: 11px;">
+                        <span style="color: #888;">서버:</span>
+                        <span id="ws-status" style="color: #ff4444;">미연결</span>
+                    </div>
+                </div>
+                <!-- 솔버 선택 -->
+                <div class="prop-section">
+                    <div class="prop-section-title">솔버</div>
+                    <select id="solver-method" class="prop-select">
+                        <option value="fem">FEM (유한요소법)</option>
+                        <option value="pd">PD (Peridynamics)</option>
+                        <option value="spg">SPG (메쉬프리)</option>
+                    </select>
+                </div>
+                <!-- 해석 실행 -->
+                <button class="tool-btn" id="btn-run-analysis" style="background: #27ae60; font-weight: bold; padding: 10px;">
+                    해석 실행
+                </button>
+                <!-- 진행률 -->
+                <div id="analysis-progress" style="display: none; margin-top: 8px; padding: 8px; background: #e3f2fd; border-radius: 4px;">
+                    <div style="font-size: 11px; color: #1565c0;" id="progress-text">대기 중...</div>
+                    <div style="margin-top: 4px; height: 4px; background: #bbdefb; border-radius: 2px; overflow: hidden;">
+                        <div id="progress-bar" style="height: 100%; background: #1976d2; width: 0%; transition: width 0.3s;"></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ====== Post-process 패널 ====== -->
+            <div class="prop-panel" id="panel-postprocess" style="display:none;">
+                <h3>Post-process</h3>
+                <div class="prop-section">
+                    <div class="prop-section-title">시각화</div>
+                    <select id="viz-mode" class="prop-select">
+                        <option value="displacement">Displacement (변위)</option>
+                        <option value="stress">Stress (응력)</option>
+                        <option value="damage">Damage (손상)</option>
+                    </select>
+                </div>
+                <div class="prop-section">
+                    <div class="slider-container">
+                        <label>변위 스케일</label>
+                        <input type="range" id="disp-scale" min="1" max="100" value="10">
+                        <div class="slider-value">x<span id="disp-scale-value">10</span></div>
+                    </div>
+                    <div class="slider-container">
+                        <label>입자 크기</label>
+                        <input type="range" id="particle-size" min="1" max="10" value="2" step="0.5">
+                        <div class="slider-value"><span id="particle-size-value">2.0</span></div>
+                    </div>
+                </div>
+                <!-- 컬러바 -->
+                <div id="analysis-colorbar" style="margin-top: 8px;"></div>
+                <!-- 통계 -->
+                <div id="analysis-stats" style="margin-top: 8px; font-size: 11px; color: #666;"></div>
+            </div>
+
+            <!-- ====== View 패널 ====== -->
+            <div class="prop-panel" id="panel-view" style="display:none;">
+                <h3>View</h3>
+                <!-- 카메라 프리셋 -->
+                <div class="prop-section">
+                    <div class="prop-section-title">카메라 프리셋</div>
+                    <button class="tool-btn" id="btn-cam-reset">Reset</button>
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 4px; margin-top: 4px;">
+                        <button class="tool-btn" id="btn-cam-front" style="background: #757575;">Front</button>
+                        <button class="tool-btn" id="btn-cam-back" style="background: #757575;">Back</button>
+                        <button class="tool-btn" id="btn-cam-top" style="background: #757575;">Top</button>
+                        <button class="tool-btn" id="btn-cam-bottom" style="background: #757575;">Bottom</button>
+                        <button class="tool-btn" id="btn-cam-left" style="background: #757575;">Left</button>
+                        <button class="tool-btn" id="btn-cam-right" style="background: #757575;">Right</button>
+                    </div>
+                </div>
+                <!-- Up 축 설정 -->
+                <div class="prop-section">
+                    <div class="prop-section-title">Up 축</div>
+                    <div style="display: flex; gap: 12px;">
+                        <label style="font-size: 11px; cursor: pointer;">
+                            <input type="radio" name="up-axis" value="y" checked> Y-up
+                        </label>
+                        <label style="font-size: 11px; cursor: pointer;">
+                            <input type="radio" name="up-axis" value="z"> Z-up
+                        </label>
+                    </div>
+                </div>
+                <!-- 조명 설정 -->
+                <div class="prop-section">
+                    <div class="prop-section-title">조명</div>
+                    <div class="slider-container">
+                        <label>Ambient 밝기</label>
+                        <input type="range" id="ambient-intensity" min="0" max="1" value="0.6" step="0.05">
+                        <div class="slider-value"><span id="ambient-intensity-value">0.6</span></div>
+                    </div>
+                    <div class="slider-container">
+                        <label>Directional 밝기</label>
+                        <input type="range" id="dir-intensity" min="0" max="1" value="0.7" step="0.05">
+                        <div class="slider-value"><span id="dir-intensity-value">0.7</span></div>
+                    </div>
+                    <label style="display: flex; align-items: center; cursor: pointer; font-size: 11px; margin-top: 6px;">
+                        <input type="checkbox" id="chk-shadow" checked style="margin-right: 8px;">
+                        그림자
+                    </label>
+                </div>
+                <!-- 배경색 -->
+                <div class="prop-section">
+                    <div class="prop-section-title">배경색</div>
+                    <select id="bg-color" class="prop-select">
+                        <option value="#e8e8e8">밝은 회색 (기본)</option>
+                        <option value="#ffffff">흰색</option>
+                        <option value="#1a1a1a">검정</option>
+                        <option value="#d0d8e0">파란 회색</option>
+                    </select>
+                </div>
+                <!-- Grid / Axes -->
+                <div class="prop-section">
+                    <div class="prop-section-title">헬퍼</div>
+                    <label style="display: flex; align-items: center; cursor: pointer; font-size: 11px; margin-bottom: 5px;">
+                        <input type="checkbox" id="chk-grid" checked style="margin-right: 8px;">
+                        Grid 표시
+                    </label>
+                    <label style="display: flex; align-items: center; cursor: pointer; font-size: 11px;">
+                        <input type="checkbox" id="chk-axes" checked style="margin-right: 8px;">
+                        Axes 표시
+                    </label>
+                </div>
+            </div>
+
         </div>
     </div>
+
+    <!-- ── 하단 상태바 ── -->
+    <div id="statusbar">
+        <span><span class="st-label">Tool:</span> <span id="current-tool" class="st-value">None</span></span>
+        <div class="st-sep"></div>
+        <span><span class="st-label">FPS:</span> <span id="fps" class="st-value">60</span></span>
+        <span id="drill-status">
+            <span class="st-label">R=</span><span id="drill-r-info" class="st-value">5</span><span class="st-label">mm</span>
+            (<span id="drill-d-info" style="color: #ff8800;">0 voxels</span>)
+        </span>
+        <div class="st-sep"></div>
+        <span><span class="st-label">WS:</span> <span id="ws-status-bar" class="st-value">미연결</span></span>
+    </div>
+
+    <!-- 숨김 파일 입력 -->
+    <input type="file" id="file-input" accept=".stl,.STL" style="display: none;" multiple>
+    <input type="file" id="nrrd-input" accept=".nrrd,.nhdr" style="display: none;">
 
     <!-- Three.js -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
@@ -255,6 +574,12 @@
     <!-- Voxel system -->
     <script src="src/nrrd.js"></script>
     <script src="src/voxel.js"></script>
+    <!-- Analysis (Pre/Post Processor + WebSocket) -->
+    <script src="src/colormap.js"></script>
+    <script src="src/ws.js"></script>
+    <script src="src/pre.js"></script>
+    <script src="src/post.js"></script>
+    <!-- Main App -->
     <script src="src/main.js"></script>
 </body>
 </html>

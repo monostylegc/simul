@@ -1,6 +1,6 @@
 /**
  * Spine Surgery Simulator - Three.js Frontend
- * 복셀 기반 드릴링 시스템
+ * 복셀 기반 드릴링 시스템 + 탭 기반 데스크탑 CAE 스타일 UI
  */
 
 // ============================================================================
@@ -12,13 +12,32 @@ let meshes = {};           // 원본 STL 메쉬 (표시용)
 let voxelMeshes = {};      // 복셀화된 메쉬 (드릴링용)
 let voxelGrids = {};       // VoxelGrid 인스턴스
 let drillPreview = null;
-let currentTool = null;  // null=도구 없음, 'drill'=드릴 등
+let currentTool = null;    // null=도구 없음, 'drill'=드릴, 'bc_brush'=BC 브러쉬
+let currentPanel = 'file'; // 현재 활성 탭/패널
 let isMouseDown = false;
 let isDrillInitialized = false;
 let gridHelper = null;     // 그리드 헬퍼 (모델 크기에 맞게 동적 조절)
 let axesHelper = null;     // 축 헬퍼
 let drillHighlight = null;         // 드릴 영향 범위 하이라이트 (InstancedMesh)
+let bcBrushHighlight = null;       // BC 브러쉬 프리뷰 하이라이트 (시안, InstancedMesh)
+let bcSelectionHighlight = null;   // BC 확정 선택 하이라이트 (노란, InstancedMesh)
 const MAX_PREVIEW_VOXELS = 5000;   // 최대 프리뷰 복셀 수
+const bcBrushSettings = { radius: 5 };
+
+// Analysis (전처리/후처리) 관련
+let wsClient = null;               // WebSocket 클라이언트
+let preProcessor = null;           // 전처리기
+let postProcessor = null;          // 후처리기
+let analysisMode = 'pre';          // 'pre' | 'post'
+
+// Force 방향/화살표 관련
+let forceDirection = new THREE.Vector3(0, -1, 0);  // Force 방향 벡터
+let forceMagnitude = 100;                           // Force 크기 (N)
+let forceArrowPreview = null;                       // ArrowHelper 프리뷰
+let appliedForceArrows = [];                        // 적용된 Force BC 화살표 [{arrow, bc, origin}]
+let isRotatingArrow = false;                        // Ctrl+드래그 회전 중 플래그
+let arrowOrigin = new THREE.Vector3();              // 화살표 원점 캐시
+let rotatingForceEntry = null;                      // Ctrl+드래그 중인 적용 화살표 엔트리
 
 // NRRD 관련
 let pendingNRRD = null;    // 로딩된 NRRD 데이터 (적용 전)
@@ -29,6 +48,12 @@ const redoStack = [];      // Redo 스택
 const MAX_HISTORY = 30;    // 최대 히스토리 개수
 let isUndoing = false;     // Undo 중인지 여부
 
+// 조명 참조 (View 탭에서 조절용)
+let ambientLight = null;
+let dirLight = null;
+
+// Up 축 설정
+let currentUpAxis = 'y';
 
 const drillSettings = {
     radius: 5,
@@ -48,7 +73,7 @@ let lastTime = performance.now();
 // ============================================================================
 function init() {
     scene = new THREE.Scene();
-    scene.background = new THREE.Color(0x1a1a2e);
+    scene.background = new THREE.Color(0xe8e8e8);
 
     const container = document.getElementById('canvas-container');
     const width = container.clientWidth;
@@ -67,9 +92,8 @@ function init() {
     controls = new THREE.OrbitControls(camera, renderer.domElement);
     controls.enableDamping = true;
     controls.dampingFactor = 0.05;
-    // CAD 스타일 네비게이션: 우클릭=회전, 중클릭=팬, 휠=줌, 좌클릭=회전(도구 없을 때)
+    // CAD 스타일 네비게이션: 우클릭=회전, 중클릭=팬, 휠=줌 (좌클릭은 도구 전용)
     controls.mouseButtons = {
-        LEFT: THREE.MOUSE.ROTATE,
         MIDDLE: THREE.MOUSE.PAN,
         RIGHT: THREE.MOUSE.ROTATE
     };
@@ -80,7 +104,7 @@ function init() {
     setupLights();
 
     // Grid (초기 그리드 - 모델 로드 후 크기 자동 조절됨)
-    gridHelper = new THREE.GridHelper(300, 30, 0x444444, 0x333333);
+    gridHelper = new THREE.GridHelper(300, 30, 0xbbbbbb, 0xcccccc);
     scene.add(gridHelper);
 
     // Axes
@@ -89,23 +113,25 @@ function init() {
 
     createDrillPreview();
     setupEventListeners();
+    setupAnalysisListeners();
+    setupViewListeners();
 
     // 자동으로 샘플 STL 로드
     loadSampleSTL();
 
     animate();
 
-    console.log('Three.js initialized (Voxel mode)');
+    console.log('Three.js initialized (Voxel mode + Tab UI)');
 }
 
 // ============================================================================
 // 조명
 // ============================================================================
 function setupLights() {
-    const ambient = new THREE.AmbientLight(0xffffff, 0.5);
-    scene.add(ambient);
+    ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+    scene.add(ambientLight);
 
-    const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
+    dirLight = new THREE.DirectionalLight(0xffffff, 0.7);
     dirLight.position.set(100, 200, 100);
     dirLight.castShadow = true;
     scene.add(dirLight);
@@ -130,7 +156,7 @@ function createDrillPreview() {
  * 드릴 프리뷰 구성요소 생성 (회색 반투명 구체)
  */
 function buildDrillPreviewComponents() {
-    const radius = drillSettings.radius;
+    const radius = currentTool === 'bc_brush' ? bcBrushSettings.radius : drillSettings.radius;
 
     // 회색 반투명 구체
     const geom = new THREE.SphereGeometry(radius, 24, 16);
@@ -337,7 +363,11 @@ function updateGridToModel() {
     const step = gridSize <= 100 ? 5 : 10;
     const divisions = Math.round(gridSize / step);
 
-    gridHelper = new THREE.GridHelper(gridSize, divisions, 0x444444, 0x333333);
+    gridHelper = new THREE.GridHelper(gridSize, divisions, 0xbbbbbb, 0xcccccc);
+    // Z-up이면 그리드를 XY 평면으로 회전
+    if (currentUpAxis === 'z') {
+        gridHelper.rotation.x = Math.PI / 2;
+    }
     scene.add(gridHelper);
 
     // 축 헬퍼도 모델에 비례
@@ -371,10 +401,10 @@ function updateModelInfo() {
     const max = box.max;
 
     infoDiv.innerHTML = `
-        <div style="padding: 8px; background: rgba(79, 195, 247, 0.1); border: 1px solid rgba(79, 195, 247, 0.3); border-radius: 4px; margin-top: 8px;">
-            <div style="color: #4fc3f7; font-size: 11px; font-weight: bold; margin-bottom: 4px;">Model Info</div>
-            <div style="font-size: 11px; color: #ccc;">크기: ${size.x.toFixed(1)} x ${size.y.toFixed(1)} x ${size.z.toFixed(1)} mm</div>
-            <div style="font-size: 11px; color: #ccc;">중심: (${center.x.toFixed(1)}, ${center.y.toFixed(1)}, ${center.z.toFixed(1)})</div>
+        <div style="padding: 8px; background: #e3f2fd; border: 1px solid #bbdefb; border-radius: 4px; margin-top: 8px;">
+            <div style="color: #1565c0; font-size: 11px; font-weight: bold; margin-bottom: 4px;">Model Info</div>
+            <div style="font-size: 11px; color: #444;">크기: ${size.x.toFixed(1)} x ${size.y.toFixed(1)} x ${size.z.toFixed(1)} mm</div>
+            <div style="font-size: 11px; color: #444;">중심: (${center.x.toFixed(1)}, ${center.y.toFixed(1)}, ${center.z.toFixed(1)})</div>
             <div style="font-size: 10px; color: #888; margin-top: 2px;">
                 min: (${min.x.toFixed(1)}, ${min.y.toFixed(1)}, ${min.z.toFixed(1)})<br>
                 max: (${max.x.toFixed(1)}, ${max.y.toFixed(1)}, ${max.z.toFixed(1)})
@@ -424,6 +454,7 @@ function onAllLoaded() {
     updateGridToModel();
     fitCameraToScene();
     updateModelList();
+    updateMaterialTargetList();
     isDrillInitialized = false;  // 새로 로드되면 복셀 초기화 필요
 }
 
@@ -498,6 +529,7 @@ function clearAllMeshes() {
     voxelMeshes = {};
     voxelGrids = {};
     clearDrillHighlight();
+    clearBCHighlights();
 
     isDrillInitialized = false;
     updateModelList();
@@ -579,10 +611,330 @@ function clearDrillHighlight() {
 }
 
 // ============================================================================
+// BC 타입별 색상 헬퍼
+// ============================================================================
+
+/**
+ * 브러쉬 선택 색상 반환 (중립 색상 - 타입 무관)
+ * @returns {{preview: number, selection: number, confirmed: number}}
+ */
+function getCurrentBCColor() {
+    return { preview: 0x66ccff, selection: 0xffcc00, confirmed: 0x1976d2 };
+}
+
+// ============================================================================
+// BC 브러쉬 하이라이트 (InstancedMesh)
+// ============================================================================
+
+/**
+ * BC 브러쉬 프리뷰 InstancedMesh 생성 (BC 타입별 색상)
+ */
+function createBCBrushHighlight() {
+    clearBCBrushHighlight();
+
+    const firstGrid = Object.values(voxelGrids)[0];
+    if (!firstGrid) return;
+
+    const colors = getCurrentBCColor();
+    const s = firstGrid.cellSize * 0.96;
+    const boxGeom = new THREE.BoxGeometry(s, s, s);
+    const mat = new THREE.MeshBasicMaterial({
+        color: colors.preview,
+        transparent: true,
+        opacity: 0.45,
+        depthTest: false
+    });
+
+    bcBrushHighlight = new THREE.InstancedMesh(boxGeom, mat, MAX_PREVIEW_VOXELS);
+    bcBrushHighlight.count = 0;
+    bcBrushHighlight.visible = false;
+    bcBrushHighlight.renderOrder = 998;
+    scene.add(bcBrushHighlight);
+}
+
+/**
+ * BC 브러쉬 프리뷰 업데이트 (호버 시 시안 하이라이트)
+ */
+function updateBCBrushPreview(intersection) {
+    if (!isDrillInitialized || !intersection) {
+        if (bcBrushHighlight) bcBrushHighlight.visible = false;
+        return;
+    }
+
+    // 지연 생성 (initializeVoxels 비동기 완료 후 첫 호버 시)
+    if (!bcBrushHighlight) {
+        createBCBrushHighlight();
+        if (!bcBrushHighlight) return;
+    }
+
+    const point = intersection.point;
+    const matrix = new THREE.Matrix4();
+    let count = 0;
+
+    Object.values(voxelGrids).forEach(grid => {
+        const affected = grid.previewDrill(point, bcBrushSettings.radius);
+        affected.forEach(pos => {
+            if (count >= MAX_PREVIEW_VOXELS) return;
+            const worldPos = grid.gridToWorld(pos.x, pos.y, pos.z);
+            matrix.setPosition(worldPos.x, worldPos.y, worldPos.z);
+            bcBrushHighlight.setMatrixAt(count, matrix);
+            count++;
+        });
+    });
+
+    bcBrushHighlight.count = count;
+    bcBrushHighlight.instanceMatrix.needsUpdate = true;
+    bcBrushHighlight.visible = count > 0;
+}
+
+/**
+ * BC 확정 선택 영역 시각화 업데이트 (BC 타입별 색상)
+ */
+function updateBCSelectionVisual() {
+    if (!preProcessor) return;
+
+    // 기존 하이라이트 제거
+    clearBCSelectionHighlight();
+
+    const positions = preProcessor.getBrushSelectionWorldPositions();
+    if (positions.length === 0) {
+        // 선택 없으면 화살표도 제거
+        clearForceArrowPreview();
+        const countEl = document.getElementById('bc-selection-count');
+        if (countEl) countEl.textContent = '0';
+        return;
+    }
+
+    const firstGrid = Object.values(voxelGrids)[0];
+    if (!firstGrid) return;
+
+    const colors = getCurrentBCColor();
+    const s = firstGrid.cellSize * 0.96;
+    const boxGeom = new THREE.BoxGeometry(s, s, s);
+    const mat = new THREE.MeshBasicMaterial({
+        color: colors.selection,
+        transparent: true,
+        opacity: 0.5,
+        depthTest: false
+    });
+
+    const count = Math.min(positions.length, MAX_PREVIEW_VOXELS);
+    bcSelectionHighlight = new THREE.InstancedMesh(boxGeom, mat, count);
+    const matrix = new THREE.Matrix4();
+    for (let i = 0; i < count; i++) {
+        const wp = positions[i];
+        matrix.setPosition(wp.x, wp.y, wp.z);
+        bcSelectionHighlight.setMatrixAt(i, matrix);
+    }
+    bcSelectionHighlight.instanceMatrix.needsUpdate = true;
+    bcSelectionHighlight.renderOrder = 997;
+    scene.add(bcSelectionHighlight);
+
+    // 선택 카운트 UI 업데이트
+    const countEl = document.getElementById('bc-selection-count');
+    if (countEl) countEl.textContent = preProcessor.getBrushSelectionCount();
+}
+
+/**
+ * BC 브러쉬 프리뷰 하이라이트 제거
+ */
+function clearBCBrushHighlight() {
+    if (bcBrushHighlight) {
+        scene.remove(bcBrushHighlight);
+        if (bcBrushHighlight.geometry) bcBrushHighlight.geometry.dispose();
+        if (bcBrushHighlight.material) bcBrushHighlight.material.dispose();
+        bcBrushHighlight = null;
+    }
+}
+
+/**
+ * BC 확정 선택 하이라이트 제거
+ */
+function clearBCSelectionHighlight() {
+    if (bcSelectionHighlight) {
+        scene.remove(bcSelectionHighlight);
+        if (bcSelectionHighlight.geometry) bcSelectionHighlight.geometry.dispose();
+        if (bcSelectionHighlight.material) bcSelectionHighlight.material.dispose();
+        bcSelectionHighlight = null;
+    }
+}
+
+/**
+ * BC 관련 하이라이트 모두 정리
+ */
+function clearBCHighlights() {
+    clearBCBrushHighlight();
+    clearBCSelectionHighlight();
+    clearForceArrowPreview();
+    clearAppliedForceArrows();
+}
+
+// ============================================================================
+// Force 화살표 프리뷰
+// ============================================================================
+
+/**
+ * Force 화살표 프리뷰 업데이트
+ * 선택 영역 중심에서 forceDirection 방향으로 화살표 표시
+ */
+function updateForceArrowPreview() {
+    if (!preProcessor) return;
+
+    const positions = preProcessor.getBrushSelectionWorldPositions();
+    if (positions.length === 0) {
+        clearForceArrowPreview();
+        return;
+    }
+
+    // 선택 영역 중심 계산
+    const center = new THREE.Vector3();
+    positions.forEach(wp => { center.x += wp.x; center.y += wp.y; center.z += wp.z; });
+    center.divideScalar(positions.length);
+    arrowOrigin.copy(center);
+
+    // 모델 바운딩박스 대각선의 20%를 화살표 길이로
+    const box = new THREE.Box3();
+    const targetMeshes = isDrillInitialized ? voxelMeshes : meshes;
+    Object.values(targetMeshes).forEach(m => { if (m.visible !== false) box.expandByObject(m); });
+    const diag = box.isEmpty() ? 50 : box.getSize(new THREE.Vector3()).length();
+    const arrowLength = diag * 0.2;
+    const headLength = arrowLength * 0.2;
+    const headWidth = headLength * 0.5;
+
+    // 기존 화살표 제거 후 재생성
+    clearForceArrowPreview();
+
+    const dir = forceDirection.clone().normalize();
+    forceArrowPreview = new THREE.ArrowHelper(dir, center, arrowLength, 0xff2222, headLength, headWidth);
+    forceArrowPreview.renderOrder = 999;
+    // 물체에 가려지지 않도록 depthTest 비활성화
+    forceArrowPreview.line.material.depthTest = false;
+    forceArrowPreview.cone.material.depthTest = false;
+    scene.add(forceArrowPreview);
+}
+
+/**
+ * Force 화살표 프리뷰 제거
+ */
+function clearForceArrowPreview() {
+    if (forceArrowPreview) {
+        scene.remove(forceArrowPreview);
+        // ArrowHelper는 내부 line/cone 가지므로 dispose
+        if (forceArrowPreview.line) {
+            forceArrowPreview.line.geometry.dispose();
+            forceArrowPreview.line.material.dispose();
+        }
+        if (forceArrowPreview.cone) {
+            forceArrowPreview.cone.geometry.dispose();
+            forceArrowPreview.cone.material.dispose();
+        }
+        forceArrowPreview = null;
+    }
+}
+
+/**
+ * 적용된 Force BC 화살표 생성
+ * 적용면 중심에 방향/크기를 나타내는 확정 화살표 표시
+ */
+function createAppliedForceArrow(positions, direction, magnitude, bc) {
+    // 적용면 중심 계산
+    const center = new THREE.Vector3();
+    positions.forEach(wp => { center.x += wp.x; center.y += wp.y; center.z += wp.z; });
+    center.divideScalar(positions.length);
+
+    // 모델 바운딩박스 기준 화살표 크기
+    const box = new THREE.Box3();
+    const targetMeshes = isDrillInitialized ? voxelMeshes : meshes;
+    Object.values(targetMeshes).forEach(m => { if (m.visible !== false) box.expandByObject(m); });
+    const diag = box.isEmpty() ? 50 : box.getSize(new THREE.Vector3()).length();
+    const arrowLength = diag * 0.2;
+    const headLength = arrowLength * 0.2;
+    const headWidth = headLength * 0.5;
+
+    const dir = direction.clone().normalize();
+    const arrow = new THREE.ArrowHelper(dir, center, arrowLength, 0xff2222, headLength, headWidth);
+    arrow.renderOrder = 998;
+    // 물체에 가려지지 않도록 depthTest 비활성화
+    arrow.line.material.depthTest = false;
+    arrow.cone.material.depthTest = false;
+    scene.add(arrow);
+    appliedForceArrows.push({ arrow, bc, origin: center.clone(), magnitude });
+}
+
+/**
+ * 적용된 Force BC 화살표 모두 제거
+ */
+function clearAppliedForceArrows() {
+    appliedForceArrows.forEach(entry => {
+        scene.remove(entry.arrow);
+        if (entry.arrow.line) {
+            entry.arrow.line.geometry.dispose();
+            entry.arrow.line.material.dispose();
+        }
+        if (entry.arrow.cone) {
+            entry.arrow.cone.geometry.dispose();
+            entry.arrow.cone.material.dispose();
+        }
+    });
+    appliedForceArrows = [];
+    rotatingForceEntry = null;
+}
+
+/**
+ * 적용된 Force 화살표 방향 업데이트
+ * Ctrl+드래그로 방향 변경 시 화살표 재생성 + BC 데이터 갱신
+ */
+function updateAppliedForceArrowDirection(entry, newDir) {
+    const dir = newDir.clone().normalize();
+    // 화살표 방향 업데이트
+    entry.arrow.setDirection(dir);
+    // BC 데이터의 force 벡터도 갱신
+    if (entry.bc && entry.bc.values && entry.bc.values.length > 0) {
+        const mag = entry.magnitude;
+        entry.bc.values[0] = [dir.x * mag, dir.y * mag, dir.z * mag];
+    }
+}
+
+/**
+ * Force 방향 표시 UI 갱신
+ */
+function updateForceDirectionDisplay() {
+    const el = document.getElementById('force-direction-display');
+    if (el) {
+        el.textContent = `(${forceDirection.x.toFixed(2)}, ${forceDirection.y.toFixed(2)}, ${forceDirection.z.toFixed(2)})`;
+    }
+}
+
+/**
+ * 재료 대상 목록 갱신
+ * 로드된 메쉬/복셀 이름으로 <option> 동적 생성
+ */
+function updateMaterialTargetList() {
+    const sel = document.getElementById('material-target');
+    if (!sel) return;
+
+    // 기존 옵션 제거 (전체 옵션 유지)
+    while (sel.options.length > 1) sel.remove(1);
+
+    // 복셀 그리드 이름 추가
+    const names = Object.keys(voxelGrids).length > 0
+        ? Object.keys(voxelGrids)
+        : Object.keys(meshes);
+
+    names.forEach(name => {
+        const opt = document.createElement('option');
+        opt.value = name;
+        opt.textContent = name;
+        sel.appendChild(opt);
+    });
+}
+
+// ============================================================================
 // 복셀화 - 드릴 모드 진입 시 초기화
 // ============================================================================
 function initializeVoxels() {
     if (isDrillInitialized) return;
+    isDrillInitialized = true; // setTimeout 전에 설정하여 이중 호출 방지
 
     console.log('Initializing voxels...');
     document.getElementById('current-tool').textContent = 'Drill (초기화 중...)';
@@ -625,8 +977,12 @@ function initializeVoxels() {
 
         isDrillInitialized = true;
         createDrillHighlight();
-        document.getElementById('current-tool').textContent = 'Drill';
+        // 현재 도구에 맞게 상태바 + 프리뷰 업데이트
+        const toolNames = { drill: 'Drill', bc_brush: 'BC Brush' };
+        document.getElementById('current-tool').textContent = toolNames[currentTool] || currentTool || 'None';
+        updateDrillPreviewSize();
         updateModelList();
+        updateMaterialTargetList();
         console.log('Voxel initialization complete');
     }, 50);
 }
@@ -754,7 +1110,7 @@ function redo() {
 }
 
 /**
- * Undo/Redo 버튼 상태 업데이트
+ * Undo/Redo 버튼 상태 업데이트 (사이드바 + 상단 아이콘)
  */
 function updateUndoRedoButtons() {
     const undoBtn = document.getElementById('btn-undo');
@@ -762,6 +1118,7 @@ function updateUndoRedoButtons() {
     const undoCount = document.getElementById('undo-count');
     const redoCount = document.getElementById('redo-count');
 
+    // 사이드바 버튼
     if (undoBtn) {
         undoBtn.disabled = historyStack.length === 0;
         undoBtn.style.opacity = historyStack.length === 0 ? 0.5 : 1;
@@ -776,8 +1133,252 @@ function updateUndoRedoButtons() {
     if (redoCount) {
         redoCount.textContent = redoStack.length;
     }
+
+    // 상단 아이콘 버튼
+    const undoTop = document.getElementById('btn-undo-top');
+    const redoTop = document.getElementById('btn-redo-top');
+    if (undoTop) undoTop.disabled = historyStack.length === 0;
+    if (redoTop) redoTop.disabled = redoStack.length === 0;
 }
 
+// ============================================================================
+// 탭 전환 시스템
+// ============================================================================
+
+/**
+ * 탭 전환 - 핵심 함수
+ * @param {string} tabName - 'file'|'modeling'|'preprocess'|'solve'|'postprocess'|'view'
+ */
+function switchTab(tabName) {
+    // 탭 버튼 active 상태 업데이트
+    document.querySelectorAll('.tab-btn').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.tab === tabName);
+    });
+
+    // 패널 전환
+    document.querySelectorAll('.prop-panel').forEach(p => p.style.display = 'none');
+    const panel = document.getElementById('panel-' + tabName);
+    if (panel) panel.style.display = 'block';
+    currentPanel = tabName;
+
+    // 탭별 도구/모드 전환
+    switch (tabName) {
+        case 'file':
+        case 'view':
+            setTool(null, true);
+            exitPostMode();
+            break;
+        case 'modeling':
+            exitPostMode();
+            setTool('drill', true);
+            // 드릴 토글 버튼 상태 동기화
+            updateDrillToggleButton();
+            break;
+        case 'preprocess':
+            exitPostMode();
+            setTool('bc_brush', true);
+            initAnalysis();
+            if (isDrillInitialized && !bcBrushHighlight) {
+                createBCBrushHighlight();
+            }
+            break;
+        case 'solve':
+            setTool(null, true);
+            exitPostMode();
+            initAnalysis();
+            break;
+        case 'postprocess':
+            setTool(null, true);
+            enterPostMode();
+            break;
+    }
+}
+
+/**
+ * 후처리 모드 진입 (메쉬 숨기고 결과 시각화)
+ */
+function enterPostMode() {
+    analysisMode = 'post';
+    if (postProcessor && postProcessor.data) {
+        Object.values(voxelMeshes).forEach(m => m.visible = false);
+        Object.values(meshes).forEach(m => m.visible = false);
+        postProcessor.updateVisualization();
+    }
+}
+
+/**
+ * 후처리 모드 해제 (메쉬 복원)
+ */
+function exitPostMode() {
+    if (analysisMode !== 'post') return;
+    analysisMode = 'pre';
+    if (isDrillInitialized) {
+        Object.values(voxelMeshes).forEach(m => m.visible = true);
+    } else {
+        Object.values(meshes).forEach(m => m.visible = true);
+    }
+    if (postProcessor) postProcessor.clear();
+}
+
+/**
+ * 드릴 토글 버튼 시각적 상태 업데이트
+ */
+function updateDrillToggleButton() {
+    const btn = document.getElementById('btn-toggle-drill');
+    if (!btn) return;
+    btn.classList.toggle('active', currentTool === 'drill');
+    btn.textContent = currentTool === 'drill' ? 'Drill: ON' : 'Drill: OFF';
+}
+
+// ============================================================================
+// 우측 속성 패널 전환 (레거시 호환 + 탭 동기화)
+// ============================================================================
+
+/**
+ * 우측 사이드바 패널 전환
+ * @param {string} panel - 레거시: 'default'|'drill'|'bc'|'analysis'|'nrrd' → 새: 'file'|'modeling'|'preprocess'|'solve'|'postprocess'|'view'
+ */
+function setToolPanel(panel) {
+    // 레거시 패널명 매핑
+    const mapping = {
+        'default': 'file',
+        'drill': 'modeling',
+        'bc': 'preprocess',
+        'analysis': 'solve',
+        'nrrd': 'file'
+    };
+    const tabName = mapping[panel] || panel;
+
+    currentPanel = tabName;
+
+    // 모든 패널 숨기기
+    document.querySelectorAll('.prop-panel').forEach(p => p.style.display = 'none');
+
+    // 선택된 패널 표시
+    const target = document.getElementById('panel-' + tabName);
+    if (target) target.style.display = 'block';
+
+    // 탭 버튼 active 상태 동기화
+    document.querySelectorAll('.tab-btn').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.tab === tabName);
+    });
+}
+
+// ============================================================================
+// BC 모드 진입/해제
+// ============================================================================
+
+/**
+ * BC 면 선택 모드 활성화
+ */
+function activateBCMode() {
+    setTool('bc_brush', true);
+    initAnalysis();
+
+    // 복셀 초기화 완료 후 브러쉬 하이라이트 생성
+    if (isDrillInitialized && !bcBrushHighlight) {
+        createBCBrushHighlight();
+    }
+}
+
+// ============================================================================
+// Re-voxelize 헬퍼
+// ============================================================================
+
+/**
+ * 현재 해상도로 복셀 재생성
+ */
+function revoxelize() {
+    if (Object.keys(meshes).length === 0) {
+        alert('먼저 STL 파일을 로드하세요');
+        return;
+    }
+
+    // 기존 복셀 메쉬 제거
+    Object.keys(voxelMeshes).forEach(key => {
+        scene.remove(voxelMeshes[key]);
+        if (voxelMeshes[key].geometry) voxelMeshes[key].geometry.dispose();
+        if (voxelMeshes[key].material) voxelMeshes[key].material.dispose();
+    });
+    voxelMeshes = {};
+    voxelGrids = {};
+    isDrillInitialized = false;
+
+    // 원본 메쉬 다시 표시
+    Object.values(meshes).forEach(m => m.visible = true);
+
+    // 재복셀화
+    initializeVoxels();
+}
+
+// ============================================================================
+// 재료 적용 헬퍼
+// ============================================================================
+
+/**
+ * 선택된 재료 프리셋 적용 (대상 오브젝트 선택 지원)
+ */
+function applyMaterial() {
+    if (!preProcessor) return;
+    const preset = document.getElementById('material-preset').value;
+    const targetSel = document.getElementById('material-target');
+    const target = targetSel ? targetSel.value : '__all__';
+
+    if (target === '__all__') {
+        // 전체에 적용
+        const names = Object.keys(voxelGrids).length > 0
+            ? Object.keys(voxelGrids)
+            : Object.keys(meshes);
+        names.forEach(name => preProcessor.assignMaterial(name, preset));
+    } else {
+        // 선택된 오브젝트에만 적용
+        preProcessor.assignMaterial(target, preset);
+    }
+}
+
+// ============================================================================
+// 카메라 프리셋 (View 탭)
+// ============================================================================
+
+/**
+ * 카메라를 지정 방향 프리셋으로 이동
+ * @param {string} direction - 'front'|'back'|'top'|'bottom'|'left'|'right'
+ */
+function setCameraPreset(direction) {
+    const box = new THREE.Box3();
+    const targetMeshes = isDrillInitialized ? voxelMeshes : meshes;
+    Object.values(targetMeshes).forEach(m => {
+        if (m.visible !== false) box.expandByObject(m);
+    });
+    Object.values(meshes).forEach(m => {
+        if (m.visible !== false) box.expandByObject(m);
+    });
+
+    if (box.isEmpty()) return;
+
+    const center = box.getCenter(new THREE.Vector3());
+    const size = box.getSize(new THREE.Vector3());
+    const maxDim = Math.max(size.x, size.y, size.z);
+    const fov = camera.fov * (Math.PI / 180);
+    const dist = maxDim / (2 * Math.tan(fov / 2)) * 1.8;
+
+    const positions = {
+        front:  [center.x, center.y, center.z + dist],
+        back:   [center.x, center.y, center.z - dist],
+        top:    [center.x, center.y + dist, center.z + 0.01],
+        bottom: [center.x, center.y - dist, center.z + 0.01],
+        left:   [center.x - dist, center.y, center.z],
+        right:  [center.x + dist, center.y, center.z]
+    };
+
+    const pos = positions[direction];
+    if (!pos) return;
+
+    camera.position.set(pos[0], pos[1], pos[2]);
+    camera.lookAt(center);
+    controls.target.copy(center);
+    controls.update();
+}
 
 // ============================================================================
 // 이벤트
@@ -785,88 +1386,22 @@ function updateUndoRedoButtons() {
 function setupEventListeners() {
     const container = document.getElementById('canvas-container');
 
-    // pointer events 사용 (OrbitControls가 pointerdown에서 preventDefault 호출하여 mousedown 차단)
+    // ── 포인터 이벤트 (캔버스) ──
     container.addEventListener('pointermove', onMouseMove);
     container.addEventListener('pointerdown', onMouseDown);
     container.addEventListener('pointerup', onMouseUp);
     window.addEventListener('resize', onWindowResize);
 
-    // 도구 버튼
-    document.querySelectorAll('.tool-btn[data-tool]').forEach(btn => {
-        btn.addEventListener('click', () => setTool(btn.dataset.tool));
-    });
-
-    // 슬라이더
-    document.getElementById('voxel-resolution').addEventListener('input', (e) => {
-        drillSettings.resolution = parseInt(e.target.value);
-        document.getElementById('voxel-resolution-value').textContent = drillSettings.resolution;
-    });
-
-    document.getElementById('btn-revoxelize').addEventListener('click', () => {
-        if (Object.keys(meshes).length === 0) {
-            alert('먼저 STL 파일을 로드하세요');
-            return;
-        }
-        // 기존 복셀 메쉬 제거
-        Object.keys(voxelMeshes).forEach(key => {
-            scene.remove(voxelMeshes[key]);
-            if (voxelMeshes[key].geometry) voxelMeshes[key].geometry.dispose();
-            if (voxelMeshes[key].material) voxelMeshes[key].material.dispose();
-        });
-        voxelMeshes = {};
-        voxelGrids = {};
-        isDrillInitialized = false;
-
-        // 원본 메쉬 다시 표시
-        Object.values(meshes).forEach(m => m.visible = true);
-
-        // 재복셀화
-        initializeVoxels();
-    });
-
-    document.getElementById('drill-radius').addEventListener('input', (e) => {
-        drillSettings.radius = parseFloat(e.target.value);
-        document.getElementById('drill-radius-value').textContent = drillSettings.radius;
-        updateDrillPreviewSize();
-        updateDrillStatus();
-    });
-
-    // 버튼
-    document.getElementById('btn-load-sample').addEventListener('click', loadSampleSTL);
-
-    // 드래그 앤 드롭 영역
-    const dropZone = document.getElementById('drop-zone');
-
-    dropZone.addEventListener('click', () => {
-        document.getElementById('file-input').click();
-    });
-
-    dropZone.addEventListener('dragover', (e) => {
+    // ── 캔버스에 STL 드래그 앤 드롭 ──
+    container.addEventListener('dragover', (e) => {
         e.preventDefault();
-        dropZone.style.borderColor = '#e94560';
-        dropZone.style.background = 'rgba(233, 69, 96, 0.1)';
     });
-
-    dropZone.addEventListener('dragleave', (e) => {
+    container.addEventListener('drop', (e) => {
         e.preventDefault();
-        dropZone.style.borderColor = '#4fc3f7';
-        dropZone.style.background = 'transparent';
-    });
-
-    dropZone.addEventListener('drop', (e) => {
-        e.preventDefault();
-        dropZone.style.borderColor = '#4fc3f7';
-        dropZone.style.background = 'transparent';
-
         const files = Array.from(e.dataTransfer.files).filter(
             f => f.name.toLowerCase().endsWith('.stl')
         );
-
-        if (files.length === 0) {
-            alert('STL 파일만 지원됩니다');
-            return;
-        }
-
+        if (files.length === 0) return;
         if (files.length === 1) {
             loadSTLFile(files[0]);
         } else {
@@ -874,6 +1409,70 @@ function setupEventListeners() {
         }
     });
 
+    // ── 탭 버튼 클릭 ──
+    document.querySelectorAll('.tab-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            switchTab(btn.dataset.tab);
+        });
+    });
+
+    // ── File 패널 버튼들 ──
+    document.getElementById('btn-load-sample').addEventListener('click', () => {
+        loadSampleSTL();
+    });
+    document.getElementById('btn-load-stl').addEventListener('click', () => {
+        document.getElementById('file-input').click();
+    });
+    document.getElementById('btn-load-nrrd').addEventListener('click', () => {
+        document.getElementById('nrrd-input').click();
+    });
+    document.getElementById('btn-clear-all').addEventListener('click', () => {
+        clearAllMeshes();
+    });
+
+    // ── Modeling 패널: 드릴 토글 ──
+    document.getElementById('btn-toggle-drill').addEventListener('click', () => {
+        setTool('drill');  // 토글 (force 없이)
+        updateDrillToggleButton();
+    });
+
+    // ── 상단 Undo/Redo 아이콘 ──
+    document.getElementById('btn-undo-top').addEventListener('click', undo);
+    document.getElementById('btn-redo-top').addEventListener('click', redo);
+
+    // ── 사이드바 슬라이더/입력 ──
+
+    // 드릴 반경
+    document.getElementById('drill-radius').addEventListener('input', (e) => {
+        drillSettings.radius = parseFloat(e.target.value);
+        document.getElementById('drill-radius-value').textContent = drillSettings.radius;
+        updateDrillPreviewSize();
+        updateDrillStatus();
+    });
+
+    // 복셀 해상도
+    document.getElementById('voxel-resolution').addEventListener('input', (e) => {
+        drillSettings.resolution = parseInt(e.target.value);
+        document.getElementById('voxel-resolution-value').textContent = drillSettings.resolution;
+    });
+
+    // Re-voxelize 버튼 (사이드바)
+    document.getElementById('btn-revoxelize').addEventListener('click', revoxelize);
+
+    // BC 브러쉬 반경 슬라이더
+    const bcBrushRadiusSlider = document.getElementById('bc-brush-radius');
+    if (bcBrushRadiusSlider) {
+        bcBrushRadiusSlider.addEventListener('input', (e) => {
+            bcBrushSettings.radius = parseFloat(e.target.value);
+            document.getElementById('bc-brush-radius-value').textContent = bcBrushSettings.radius;
+            // 프리뷰 구체 크기 업데이트
+            if (currentTool === 'bc_brush') {
+                updateDrillPreviewSize();
+            }
+        });
+    }
+
+    // STL 파일 입력
     document.getElementById('file-input').addEventListener('change', (e) => {
         const files = e.target.files;
         if (files.length === 1) {
@@ -903,13 +1502,7 @@ function setupEventListeners() {
         });
     }
 
-    document.getElementById('btn-clear-all').addEventListener('click', clearAllMeshes);
-
-    // NRRD 로딩
-    document.getElementById('btn-load-nrrd').addEventListener('click', () => {
-        document.getElementById('nrrd-input').click();
-    });
-
+    // NRRD 파일 입력
     document.getElementById('nrrd-input').addEventListener('change', (e) => {
         const file = e.target.files[0];
         if (file) loadNRRDFile(file);
@@ -928,23 +1521,7 @@ function setupEventListeners() {
 
     document.getElementById('btn-apply-nrrd').addEventListener('click', applyNRRD);
 
-    document.getElementById('btn-reset-view').addEventListener('click', () => {
-        fitCameraToScene();
-    });
-
-    document.getElementById('btn-top-view').addEventListener('click', () => {
-        const center = controls.target.clone();
-        camera.position.set(center.x, center.y + 300, center.z);
-        camera.lookAt(center);
-    });
-
-    document.getElementById('btn-front-view').addEventListener('click', () => {
-        const center = controls.target.clone();
-        camera.position.set(center.x, center.y, center.z + 300);
-        camera.lookAt(center);
-    });
-
-    // Undo/Redo 버튼
+    // Undo/Redo 버튼 (사이드바)
     const undoBtn = document.getElementById('btn-undo');
     const redoBtn = document.getElementById('btn-redo');
     if (undoBtn) undoBtn.addEventListener('click', undo);
@@ -960,7 +1537,6 @@ function setupEventListeners() {
             redo();
         }
     });
-
 }
 
 function loadSTLFile(file) {
@@ -1024,60 +1600,58 @@ function loadMultipleSTLFiles(files) {
 
 /**
  * 도구 설정 (CAD 스타일: 네비게이션은 항상 활성)
- * - 우클릭 드래그: 회전
- * - 휠: 줌
- * - 중클릭 드래그: 팬
- * - 좌클릭: 활성 도구 사용 (도구 없으면 무시)
+ * @param {string|null} tool - null=해제, 'drill'=드릴, 'bc_brush'=BC 브러쉬
+ * @param {boolean} force - true면 토글 없이 강제 설정 (탭 전환 시 사용)
  */
-function setTool(tool) {
-    // 같은 도구 다시 클릭 → 토글 (해제)
-    if (currentTool === tool) {
-        currentTool = null;
-    } else {
+function setTool(tool, force) {
+    if (force) {
+        // 강제 설정 (탭 전환 시)
         currentTool = tool;
+    } else {
+        // 일반 토글
+        if (tool !== null && currentTool === tool) {
+            currentTool = null;
+        } else {
+            currentTool = tool;
+        }
     }
 
-    // 버튼 활성 상태 업데이트
-    document.querySelectorAll('.tool-btn[data-tool]').forEach(btn => {
-        btn.classList.toggle('active', btn.dataset.tool === currentTool);
-    });
-
     // 상태바 업데이트
+    const toolNames = { drill: 'Drill', bc_select: 'BC Select', bc_brush: 'BC Brush' };
     document.getElementById('current-tool').textContent = currentTool
-        ? currentTool.charAt(0).toUpperCase() + currentTool.slice(1)
+        ? (toolNames[currentTool] || currentTool)
         : 'None';
-    document.getElementById('drill-panel').style.display = currentTool === 'drill' ? 'block' : 'none';
 
+    // 드릴 상태바
     const drillStatus = document.getElementById('drill-status');
     if (drillStatus) {
-        drillStatus.style.display = currentTool === 'drill' ? 'block' : 'none';
+        drillStatus.style.display = (currentTool === 'drill' || currentTool === 'bc_brush') ? 'inline' : 'none';
         updateDrillStatus();
     }
 
-    // 네비게이션은 항상 활성 (CAD 스타일: 우클릭=회전, 중클릭=팬, 휠=줌)
+    // 네비게이션 (우클릭=회전, 중클릭=팬, 휠=줌, 좌클릭=도구 전용)
     controls.enabled = true;
-    if (currentTool) {
-        // 도구 활성: 좌클릭은 도구용 (OrbitControls에서 제외)
-        controls.mouseButtons = {
-            MIDDLE: THREE.MOUSE.PAN,
-            RIGHT: THREE.MOUSE.ROTATE
-        };
-    } else {
-        // 도구 없음: 좌클릭도 회전
-        controls.mouseButtons = {
-            LEFT: THREE.MOUSE.ROTATE,
-            MIDDLE: THREE.MOUSE.PAN,
-            RIGHT: THREE.MOUSE.ROTATE
-        };
-    }
+    controls.mouseButtons = {
+        MIDDLE: THREE.MOUSE.PAN,
+        RIGHT: THREE.MOUSE.ROTATE
+    };
 
     drillPreview.visible = false;
     if (drillHighlight) drillHighlight.visible = false;
+    if (bcBrushHighlight) bcBrushHighlight.visible = false;
 
-    // 드릴 모드 진입 시 복셀 초기화
-    if (currentTool === 'drill' && !isDrillInitialized) {
+    // 드릴/브러쉬 모드 진입 시 복셀 초기화
+    if ((currentTool === 'drill' || currentTool === 'bc_brush') && !isDrillInitialized) {
         initializeVoxels();
     }
+
+    // 도구 전환 시 프리뷰 구체 크기 갱신 (드릴 ↔ 브러쉬 반경 다름)
+    if (currentTool === 'drill' || currentTool === 'bc_brush') {
+        updateDrillPreviewSize();
+    }
+
+    // 드릴 토글 버튼 동기화
+    updateDrillToggleButton();
 }
 
 /**
@@ -1095,6 +1669,22 @@ function onMouseMove(event) {
     mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
     mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
 
+    // Ctrl+드래그: 적용된 Force 화살표 방향 조정
+    if (isRotatingArrow && rotatingForceEntry) {
+        raycaster.setFromCamera(mouse, camera);
+        const camDir = camera.getWorldDirection(new THREE.Vector3());
+        const plane = new THREE.Plane().setFromNormalAndCoplanarPoint(camDir, arrowOrigin);
+        const target = new THREE.Vector3();
+        raycaster.ray.intersectPlane(plane, target);
+        if (target) {
+            const newDir = target.sub(arrowOrigin).normalize();
+            forceDirection.copy(newDir);
+            updateAppliedForceArrowDirection(rotatingForceEntry, newDir);
+            updateForceDirectionDisplay();
+        }
+        return;
+    }
+
     if (currentTool === 'drill') {
         updateDrillPreview();
         if (isMouseDown) {
@@ -1103,12 +1693,43 @@ function onMouseMove(event) {
                 performDrill(intersection);
             }
         }
+    } else if (currentTool === 'bc_brush') {
+        // BC 브러쉬: 드릴과 동일한 프리뷰 패턴
+        const intersection = getIntersection();
+        if (intersection) {
+            drillPreview.position.copy(intersection.point);
+            drillPreview.visible = true;
+
+            // 호버 프리뷰 (BC 타입별 색상)
+            if (!isMouseDown) {
+                updateBCBrushPreview(intersection);
+            }
+
+            // 드래그 중 선택 누적 (Ctrl 시 화살표 조정이므로 제외)
+            if (isMouseDown && preProcessor && !isRotatingArrow) {
+                preProcessor.brushSelectSphere(intersection.point, bcBrushSettings.radius);
+                updateBCSelectionVisual();
+            }
+        } else {
+            drillPreview.visible = false;
+            if (bcBrushHighlight) bcBrushHighlight.visible = false;
+        }
     }
 }
 
 function onMouseDown(event) {
     if (event.button !== 0) return;
     isMouseDown = true;
+
+    // Ctrl+좌클릭: Force 화살표 회전 시작 (선택 영역 있을 때 항상 가능)
+    if (event.ctrlKey && currentTool === 'bc_brush' && appliedForceArrows.length > 0) {
+        // 마지막 적용된 Force 화살표 방향 조정
+        rotatingForceEntry = appliedForceArrows[appliedForceArrows.length - 1];
+        arrowOrigin.copy(rotatingForceEntry.origin);
+        isRotatingArrow = true;
+        controls.enabled = false;  // 회전 중 OrbitControls 비활성
+        return;
+    }
 
     if (currentTool === 'drill') {
         // 드릴링 시작 시 스냅샷 저장 (Undo용)
@@ -1120,11 +1741,32 @@ function onMouseDown(event) {
         if (intersection) {
             performDrill(intersection);
         }
+    } else if (currentTool === 'bc_brush' && preProcessor && !event.ctrlKey) {
+        // BC 브러쉬: 클릭으로 선택 누적 (Ctrl 시 화살표 조정이므로 제외)
+        const intersection = getIntersection();
+        if (intersection) {
+            preProcessor.brushSelectSphere(intersection.point, bcBrushSettings.radius);
+            updateBCSelectionVisual();
+            if (bcBrushHighlight) bcBrushHighlight.visible = false;
+        }
+    } else if (currentTool === 'bc_select' && preProcessor) {
+        // BC 모드: 면 선택 (레거시)
+        const intersection = getIntersection();
+        if (intersection) {
+            preProcessor.selectFace(intersection, event.shiftKey);
+        }
     }
 }
 
 function onMouseUp() {
     isMouseDown = false;
+
+    // 화살표 회전 종료
+    if (isRotatingArrow) {
+        isRotatingArrow = false;
+        controls.enabled = true;
+        rotatingForceEntry = null;
+    }
 }
 
 function updateDrillPreview() {
@@ -1176,13 +1818,13 @@ function updateModelList() {
             const count = mesh.geometry.attributes.position.count / 3;
             const voxelCount = voxelGrids[name] ?
                 voxelGrids[name].data.reduce((a, b) => a + b, 0) : 0;
-            return `<div style="padding: 5px; color: #4fc3f7;">• ${name} (${count} tris, ${voxelCount} voxels)</div>`;
+            return `<div style="padding: 5px; color: #1565c0;">• ${name} (${count} tris, ${voxelCount} voxels)</div>`;
         });
     } else {
         // 원본 메쉬 정보 표시
         items = Object.entries(meshes).map(([name, mesh]) => {
             const count = mesh.geometry.attributes.position.count / 3;
-            return `<div style="padding: 5px; color: #888;">• ${name} (${count} tris)</div>`;
+            return `<div style="padding: 5px; color: #555;">• ${name} (${count} tris)</div>`;
         });
     }
 
@@ -1226,8 +1868,11 @@ function loadNRRDFile(file) {
             const { header } = pendingNRRD;
             console.log('NRRD 로딩 완료:', header);
 
-            // NRRD 설정 패널 표시
-            document.getElementById('nrrd-panel').style.display = 'block';
+            // File 탭으로 전환 + NRRD 설정 섹션 표시
+            switchTab('file');
+            const nrrdSection = document.getElementById('nrrd-settings-section');
+            if (nrrdSection) nrrdSection.style.display = 'block';
+
             document.getElementById('current-tool').textContent = 'NRRD 로드됨 - 설정 조절 후 Apply';
 
             // NRRD 정보 표시
@@ -1246,13 +1891,13 @@ function loadNRRDFile(file) {
         } catch (error) {
             console.error('NRRD 파싱 실패:', error);
             alert('NRRD 파일 로딩 실패: ' + error.message);
-            document.getElementById('current-tool').textContent = 'Navigate';
+            document.getElementById('current-tool').textContent = 'None';
         }
     };
 
     reader.onerror = () => {
         alert('파일 읽기 실패');
-        document.getElementById('current-tool').textContent = 'Navigate';
+        document.getElementById('current-tool').textContent = 'None';
     };
 
     reader.readAsArrayBuffer(file);
@@ -1305,21 +1950,21 @@ function applyNRRD() {
             // 복셀 시스템 초기화 완료 상태로 설정
             isDrillInitialized = true;
 
-            // NRRD 패널 숨기기
-            document.getElementById('nrrd-panel').style.display = 'none';
+            // File 탭 유지
+            switchTab('file');
 
             // 카메라 맞추기
             fitCameraToSceneFromVoxels();
 
             updateModelList();
-            document.getElementById('current-tool').textContent = 'Navigate';
+            document.getElementById('current-tool').textContent = 'None';
 
             console.log('NRRD 메쉬 생성 완료');
 
         } catch (error) {
             console.error('NRRD 적용 실패:', error);
             alert('NRRD 적용 실패: ' + error.message);
-            document.getElementById('current-tool').textContent = 'Navigate';
+            document.getElementById('current-tool').textContent = 'None';
         }
     }, 50);
 }
@@ -1354,6 +1999,334 @@ function fitCameraToSceneFromVoxels() {
     camera.lookAt(center);
     controls.target.copy(center);
     controls.update();
+}
+
+// ============================================================================
+// Analysis (전처리/후처리) 시스템
+// ============================================================================
+
+/**
+ * Analysis 모드 초기화
+ */
+function initAnalysis() {
+    // 복셀이 아직 초기화 안 됐으면 복셀화 실행
+    if (!isDrillInitialized && Object.keys(meshes).length > 0) {
+        initializeVoxels();
+    }
+
+    // PreProcessor 초기화
+    if (!preProcessor) {
+        const targetMeshes = isDrillInitialized ? voxelMeshes : meshes;
+        preProcessor = new PreProcessor(scene, targetMeshes, voxelGrids);
+    }
+
+    // PostProcessor 초기화
+    if (!postProcessor) {
+        postProcessor = new PostProcessor(scene);
+    }
+
+    // WebSocket 연결
+    if (!wsClient) {
+        wsClient = new WSClient();
+        wsClient.onConnect(() => {
+            // Solve 패널 내 상태
+            const el = document.getElementById('ws-status');
+            if (el) { el.textContent = '연결됨'; el.style.color = '#27ae60'; }
+            // 상태바 WS 표시
+            const bar = document.getElementById('ws-status-bar');
+            if (bar) { bar.textContent = '연결됨'; bar.style.color = '#27ae60'; }
+        });
+        wsClient.onDisconnect(() => {
+            const el = document.getElementById('ws-status');
+            if (el) { el.textContent = '미연결'; el.style.color = '#ff4444'; }
+            const bar = document.getElementById('ws-status-bar');
+            if (bar) { bar.textContent = '미연결'; bar.style.color = '#ff4444'; }
+        });
+        wsClient.onProgress((data) => {
+            updateAnalysisProgress(data);
+        });
+        wsClient.onResult((data) => {
+            onAnalysisResult(data);
+        });
+        wsClient.onError((data) => {
+            onAnalysisError(data);
+        });
+        wsClient.connect();
+    }
+}
+
+/**
+ * 해석 실행
+ */
+function runAnalysis() {
+    if (!preProcessor || !wsClient) {
+        alert('Analysis 모드를 먼저 활성화하세요');
+        return;
+    }
+
+    if (!wsClient.connected) {
+        alert('서버에 연결되지 않았습니다.\nuv run python -m src.server.app 으로 서버를 시작하세요.');
+        return;
+    }
+
+    const method = document.getElementById('solver-method').value;
+    const request = preProcessor.buildAnalysisRequest(method);
+
+    if (request.positions.length === 0) {
+        alert('복셀 데이터가 없습니다. 먼저 STL을 로드하세요.');
+        return;
+    }
+
+    // 원본 좌표 캐시 (후처리용)
+    postProcessor.cachePositions(request.positions);
+
+    // 진행률 표시
+    const progressDiv = document.getElementById('analysis-progress');
+    if (progressDiv) progressDiv.style.display = 'block';
+    updateAnalysisProgress({ step: 'sending', message: '요청 전송 중...' });
+
+    // 해석 요청 전송
+    wsClient.send('run_analysis', request);
+
+    console.log('해석 요청:', { method, particles: request.positions.length, bcs: request.boundary_conditions.length });
+}
+
+/**
+ * 해석 진행률 업데이트
+ */
+function updateAnalysisProgress(data) {
+    const textEl = document.getElementById('progress-text');
+    const barEl = document.getElementById('progress-bar');
+
+    if (textEl) textEl.textContent = data.message || data.step || '';
+
+    // 단계별 진행률 추정
+    const stepProgress = {
+        sending: 5, init: 10, setup: 20, bc: 30,
+        material: 40, solving: 70, postprocess: 90, done: 100,
+    };
+    const pct = stepProgress[data.step] || 50;
+    if (barEl) barEl.style.width = pct + '%';
+}
+
+/**
+ * 해석 결과 수신
+ */
+function onAnalysisResult(data) {
+    console.log('해석 결과 수신:', data.info);
+
+    // 진행률 완료
+    updateAnalysisProgress({ step: 'done', message: `완료 (${data.info?.elapsed_time?.toFixed(2) || '?'}초)` });
+
+    // 후처리기에 결과 로드
+    postProcessor.loadResults(data);
+
+    // 통계 표시
+    const statsEl = document.getElementById('analysis-stats');
+    if (statsEl && data.info) {
+        statsEl.innerHTML = `
+            <div>입자: ${data.info.n_particles || '?'}</div>
+            <div>방법: ${data.info.method || '?'}</div>
+            <div>수렴: ${data.info.converged ? '예' : '아니오'}</div>
+            <div>반복: ${data.info.iterations || '?'}</div>
+            <div>백엔드: ${data.info.backend || '?'}</div>
+            <div>최대 변위: ${postProcessor.stats.maxDisp.toExponential(3)}</div>
+        `;
+    }
+
+    // Post-process 탭으로 자동 전환
+    switchTab('postprocess');
+}
+
+/**
+ * 해석 에러 처리
+ */
+function onAnalysisError(data) {
+    console.error('해석 에러:', data.message);
+    updateAnalysisProgress({ step: 'error', message: `에러: ${data.message}` });
+    alert('해석 실패: ' + data.message);
+}
+
+/**
+ * Analysis 이벤트 리스너 설정 (사이드바 패널 내부 요소)
+ */
+function setupAnalysisListeners() {
+    // 선택 해제 (사이드바 버튼)
+    const clearSelBtn = document.getElementById('btn-clear-selection');
+    if (clearSelBtn) clearSelBtn.addEventListener('click', () => {
+        if (preProcessor) {
+            preProcessor.clearSelection();
+            preProcessor.clearBrushSelection();
+        }
+        clearBCSelectionHighlight();
+        const countEl = document.getElementById('bc-selection-count');
+        if (countEl) countEl.textContent = '0';
+    });
+
+    // Force 크기 슬라이더
+    const forceMagSlider = document.getElementById('force-magnitude');
+    if (forceMagSlider) {
+        forceMagSlider.addEventListener('input', (e) => {
+            forceMagnitude = parseFloat(e.target.value);
+            document.getElementById('force-magnitude-value').textContent = forceMagnitude;
+        });
+    }
+
+    // Force 방향 리셋 (-Y)
+    const resetForceDirBtn = document.getElementById('btn-reset-force-dir');
+    if (resetForceDirBtn) {
+        resetForceDirBtn.addEventListener('click', () => {
+            forceDirection.set(0, -1, 0);
+            updateForceDirectionDisplay();
+            // 적용된 Force 화살표가 있으면 마지막 것의 방향도 리셋
+            if (appliedForceArrows.length > 0) {
+                const entry = appliedForceArrows[appliedForceArrows.length - 1];
+                updateAppliedForceArrowDirection(entry, forceDirection);
+            }
+        });
+    }
+
+    // Step 1: Fixed BC 적용
+    const applyFixedBtn = document.getElementById('btn-apply-fixed');
+    if (applyFixedBtn) applyFixedBtn.addEventListener('click', () => {
+        if (!preProcessor) return;
+        preProcessor.addFixedBC();
+        // 적용 후 선택 정리
+        clearBCSelectionHighlight();
+        clearForceArrowPreview();
+        const countEl = document.getElementById('bc-selection-count');
+        if (countEl) countEl.textContent = '0';
+    });
+
+    // Step 2: Force BC 적용
+    const applyForceBtn = document.getElementById('btn-apply-force');
+    if (applyForceBtn) applyForceBtn.addEventListener('click', () => {
+        if (!preProcessor) return;
+        if (preProcessor.getBrushSelectionCount() === 0) return;
+        // 적용 전 선택 위치 캡처 (적용 후 brushSelection이 비워지므로)
+        const selectedPositions = preProcessor.getBrushSelectionWorldPositions();
+        // 방향 × 크기로 Force 벡터 계산
+        const dir = forceDirection.clone().normalize();
+        const force = [dir.x * forceMagnitude, dir.y * forceMagnitude, dir.z * forceMagnitude];
+        const bc = preProcessor.addForceBC(force);
+        // 적용면 중심에 확정 화살표 생성
+        createAppliedForceArrow(selectedPositions, forceDirection, forceMagnitude, bc);
+        // 적용 후 선택 정리
+        clearBCSelectionHighlight();
+        clearForceArrowPreview();
+        const countEl = document.getElementById('bc-selection-count');
+        if (countEl) countEl.textContent = '0';
+    });
+
+    // BC 제거 (사이드바 버튼)
+    const clearBcBtn = document.getElementById('btn-clear-bc');
+    if (clearBcBtn) clearBcBtn.addEventListener('click', () => {
+        if (preProcessor) {
+            preProcessor.clearAllBC();
+            preProcessor.clearBrushSelection();
+        }
+        clearBCHighlights();  // 브러쉬/선택/화살표 모두 정리
+        const countEl = document.getElementById('bc-selection-count');
+        if (countEl) countEl.textContent = '0';
+    });
+
+    // 재료 적용 (사이드바 버튼)
+    const assignMatBtn = document.getElementById('btn-assign-material');
+    if (assignMatBtn) assignMatBtn.addEventListener('click', () => {
+        if (!preProcessor) return;
+        applyMaterial();
+    });
+
+    // 해석 실행 (사이드바 버튼)
+    const runBtn = document.getElementById('btn-run-analysis');
+    if (runBtn) runBtn.addEventListener('click', () => {
+        initAnalysis();
+        runAnalysis();
+    });
+
+    // 후처리 슬라이더
+    const vizMode = document.getElementById('viz-mode');
+    if (vizMode) vizMode.addEventListener('change', (e) => {
+        if (postProcessor) postProcessor.setMode(e.target.value);
+    });
+
+    const dispScale = document.getElementById('disp-scale');
+    if (dispScale) dispScale.addEventListener('input', (e) => {
+        document.getElementById('disp-scale-value').textContent = e.target.value;
+        if (postProcessor) postProcessor.setDisplacementScale(parseFloat(e.target.value));
+    });
+
+    const particleSize = document.getElementById('particle-size');
+    if (particleSize) particleSize.addEventListener('input', (e) => {
+        document.getElementById('particle-size-value').textContent = parseFloat(e.target.value).toFixed(1);
+        if (postProcessor) postProcessor.setParticleSize(parseFloat(e.target.value));
+    });
+}
+
+// ============================================================================
+// View 탭 이벤트 리스너
+// ============================================================================
+function setupViewListeners() {
+    // 카메라 프리셋 버튼들
+    document.getElementById('btn-cam-reset').addEventListener('click', fitCameraToScene);
+    document.getElementById('btn-cam-front').addEventListener('click', () => setCameraPreset('front'));
+    document.getElementById('btn-cam-back').addEventListener('click', () => setCameraPreset('back'));
+    document.getElementById('btn-cam-top').addEventListener('click', () => setCameraPreset('top'));
+    document.getElementById('btn-cam-bottom').addEventListener('click', () => setCameraPreset('bottom'));
+    document.getElementById('btn-cam-left').addEventListener('click', () => setCameraPreset('left'));
+    document.getElementById('btn-cam-right').addEventListener('click', () => setCameraPreset('right'));
+
+    // Up 축 라디오 변경
+    document.querySelectorAll('input[name="up-axis"]').forEach(radio => {
+        radio.addEventListener('change', (e) => {
+            currentUpAxis = e.target.value;
+            if (currentUpAxis === 'z') {
+                camera.up.set(0, 0, 1);
+            } else {
+                camera.up.set(0, 1, 0);
+            }
+            controls.update();
+            // GridHelper 재생성
+            updateGridToModel();
+        });
+    });
+
+    // Ambient 밝기 슬라이더
+    document.getElementById('ambient-intensity').addEventListener('input', (e) => {
+        const val = parseFloat(e.target.value);
+        document.getElementById('ambient-intensity-value').textContent = val.toFixed(2);
+        if (ambientLight) ambientLight.intensity = val;
+    });
+
+    // Directional 밝기 슬라이더
+    document.getElementById('dir-intensity').addEventListener('input', (e) => {
+        const val = parseFloat(e.target.value);
+        document.getElementById('dir-intensity-value').textContent = val.toFixed(2);
+        if (dirLight) dirLight.intensity = val;
+    });
+
+    // 그림자 체크박스
+    document.getElementById('chk-shadow').addEventListener('change', (e) => {
+        renderer.shadowMap.enabled = e.target.checked;
+        if (dirLight) dirLight.castShadow = e.target.checked;
+        // 그림자 맵 변경 시 재렌더 필요
+        renderer.shadowMap.needsUpdate = true;
+    });
+
+    // 배경색 선택
+    document.getElementById('bg-color').addEventListener('change', (e) => {
+        scene.background = new THREE.Color(e.target.value);
+    });
+
+    // Grid 표시 체크박스
+    document.getElementById('chk-grid').addEventListener('change', (e) => {
+        if (gridHelper) gridHelper.visible = e.target.checked;
+    });
+
+    // Axes 표시 체크박스
+    document.getElementById('chk-axes').addEventListener('change', (e) => {
+        if (axesHelper) axesHelper.visible = e.target.checked;
+    });
 }
 
 // ============================================================================
