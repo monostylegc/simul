@@ -83,6 +83,9 @@ class SPGExplicitSolver:
         self.lam[None] = material.lam
         self.mu[None] = material.mu
 
+        # Per-particle 재료 상수 초기화 (단일 재료)
+        particles.set_material_constants(material.lam, material.mu)
+
         # 시간 간격 (형상함수 기울기 기반 spectral radius 추정)
         if dt is None:
             dt = self._estimate_stable_dt(material, particles, kernel, safety=0.5)
@@ -193,12 +196,13 @@ class SPGExplicitSolver:
             self.particles.v[i] = ti.Vector.zero(ti.f64, self.dim)
 
     def compute_forces(self):
-        """내부력 계산 (변형 구배 → 변형률 → 응력 → 내부력 → 안정화)."""
+        """내부력 계산 (변형 구배 → 변형률 → 응력 → 내부력 → 안정화).
+
+        재료 상수는 particles.lam_param, particles.mu_param에서 읽는다.
+        """
         self.spg_compute.compute_deformation_gradient()
         self.spg_compute.compute_strain()
-        self.spg_compute.compute_internal_force_with_stabilization(
-            self.material.lam, self.material.mu
-        )
+        self.spg_compute.compute_internal_force_with_stabilization()
 
     def check_failure(self):
         """본드 파괴 검사."""

@@ -119,20 +119,20 @@ class SPGCompute:
             self.particles.strain[i] = 0.5 * (F + F.transpose()) - I
 
     @ti.kernel
-    def compute_stress(self, lam: ti.f64, mu: ti.f64):
-        """Cauchy 응력 계산.
+    def compute_stress(self):
+        """Cauchy 응력 계산 (per-particle 재료 상수).
 
-        σ = λ·tr(ε)·I + 2μ·ε
+        σ = λ_i·tr(ε)·I + 2μ_i·ε
 
-        Args:
-            lam: 라메 제1 매개변수 λ
-            mu: 전단 계수 μ
+        재료 상수는 particles.lam_param, particles.mu_param에서 입자별로 읽는다.
         """
         for i in range(self.n_particles):
+            lam_i = self.particles.lam_param[i]
+            mu_i = self.particles.mu_param[i]
             eps = self.particles.strain[i]
             tr_eps = eps.trace()
             I = ti.Matrix.identity(ti.f64, self.dim)
-            self.particles.stress[i] = lam * tr_eps * I + 2.0 * mu * eps
+            self.particles.stress[i] = lam_i * tr_eps * I + 2.0 * mu_i * eps
 
     @ti.kernel
     def compute_internal_force_scatter(self):
@@ -221,18 +221,13 @@ class SPGCompute:
                             for d in ti.static(range(self.dim)):
                                 ti.atomic_sub(self.particles.f_int[i][d], f_stab[d])
 
-    def compute_internal_force_with_stabilization(
-        self,
-        lam: float,
-        mu: float
-    ):
+    def compute_internal_force_with_stabilization(self):
         """응력 계산 → 내부력(DNI) → 안정화를 순차 실행.
 
-        Args:
-            lam: 라메 제1 매개변수
-            mu: 전단 계수
+        재료 상수는 particles.lam_param, particles.mu_param에서 읽는다.
+        사전에 particles.set_material_constants() 호출 필요.
         """
-        self.compute_stress(lam, mu)
+        self.compute_stress()
         self.compute_internal_force_scatter()
         self.compute_stabilization_force()
 

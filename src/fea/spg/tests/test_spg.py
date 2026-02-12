@@ -431,7 +431,8 @@ class TestSPGSolver:
         # 변위 없음 → F = I → ε = 0 → σ = 0 → f_int = 0
         compute.compute_deformation_gradient()
         compute.compute_strain()
-        compute.compute_internal_force_with_stabilization(mat.lam, mat.mu)
+        ps.set_material_constants(mat.lam, mat.mu)
+        compute.compute_internal_force_with_stabilization()
 
         f_int = ps.f_int.to_numpy()
         max_force = np.max(np.abs(f_int))

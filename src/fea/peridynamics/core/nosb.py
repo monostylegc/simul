@@ -192,8 +192,6 @@ class NOSBCompute:
     @ti.kernel
     def compute_force_state_with_stabilization(
         self,
-        bulk_modulus: ti.f32,
-        shear_modulus: ti.f32,
         bond_constant: ti.f32
     ):
         """Compute forces with zero-energy mode stabilization.
@@ -203,28 +201,29 @@ class NOSBCompute:
         where t[i]<j> = ω_ij · P_i · K_i⁻¹ · ξ_ij
 
         Stabilization adds bond-based penalty force.
+        재료 상수는 particles.bulk_mod, particles.shear_mod에서 입자별로 읽는다.
 
         Args:
-            bulk_modulus: Bulk modulus K
-            shear_modulus: Shear modulus μ
             bond_constant: Bond-based micromodulus c for stabilization
         """
-        mu = shear_modulus
         G_s = self.G_s[None]
 
-        # First pass: compute stress P for all particles
+        # First pass: compute stress P for all particles (per-particle 재료)
         for i in range(self.n_particles):
+            K_i = self.particles.bulk_mod[i]
+            mu_i = self.particles.shear_mod[i]
+
             F = self.particles.F[i]
 
             I = ti.Matrix.identity(ti.f32, self.dim)
             eps = 0.5 * (F + F.transpose()) - I
             tr_eps = eps.trace()
 
-            lam = bulk_modulus - shear_modulus
+            lam = K_i - mu_i
             if ti.static(self.dim == 3):
-                lam = bulk_modulus - 2.0 * shear_modulus / 3.0
+                lam = K_i - 2.0 * mu_i / 3.0
 
-            sigma = lam * tr_eps * I + 2.0 * mu * eps
+            sigma = lam * tr_eps * I + 2.0 * mu_i * eps
             self.particles.P[i] = sigma
 
         # Reset forces

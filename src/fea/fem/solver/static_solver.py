@@ -30,21 +30,27 @@ class StaticSolver:
     def __init__(
         self,
         mesh: "FEMesh",
-        material: "MaterialBase",
+        material: "MaterialBase" = None,
         use_newton: bool = True,
         max_iterations: int = 50,
-        tol: float = 1e-8
+        tol: float = 1e-8,
+        materials: Optional[Dict[int, "MaterialBase"]] = None
     ):
         """Initialize solver.
 
         Args:
             mesh: FEMesh instance
-            material: Material model
+            material: Material model (단일 재료)
             use_newton: Use Newton-Raphson for nonlinear (default: True)
             max_iterations: Maximum Newton iterations
             tol: Convergence tolerance for residual norm
+            materials: {material_id: MaterialBase} 딕셔너리 (다중 재료)
         """
         self.mesh = mesh
+        self.materials = materials
+        if materials is not None and material is None:
+            # 다중 재료: 첫 번째 재료를 기본 재료로 사용
+            material = next(iter(materials.values()))
         self.material = material
         self.use_newton = use_newton and not material.is_linear
         self.max_iterations = max_iterations
@@ -108,7 +114,7 @@ class StaticSolver:
         u_reshaped = u.reshape(-1, self.dim)
         self.mesh.u.from_numpy(u_reshaped.astype(np.float32))
 
-        # Compute stress
+        # 응력 계산 (다중 재료: 기본 재료로 전체 계산 후 사용)
         self.mesh.compute_deformation_gradient()
         self.material.compute_stress(self.mesh)
         self.material.compute_nodal_forces(self.mesh)
@@ -257,8 +263,18 @@ class StaticSolver:
         return {"converged": False, "iterations": self.max_iterations}
 
     def _assemble_stiffness_matrix(self) -> sparse.coo_matrix:
-        """Assemble global stiffness matrix using element contributions."""
-        C = self.material.get_elasticity_tensor()
+        """Assemble global stiffness matrix using element contributions.
+
+        다중 재료 지원: self.materials가 설정되면 요소별 material_id에 따라
+        다른 탄성 텐서를 사용한다.
+        """
+        # 다중 재료: material_id별 탄성 텐서 매핑
+        if self.materials is not None:
+            material_ids = self.mesh.material_id.to_numpy()
+            C_map = {mid: mat.get_elasticity_tensor()
+                     for mid, mat in self.materials.items()}
+        else:
+            C_single = self.material.get_elasticity_tensor()
 
         # Collect triplets
         rows = []
@@ -274,6 +290,12 @@ class StaticSolver:
         dim = self.dim
 
         for e in range(self.mesh.n_elements):
+            # 요소별 탄성 텐서 선택
+            if self.materials is not None:
+                C = C_map[material_ids[e]]
+            else:
+                C = C_single
+
             # Element stiffness matrix
             ke = np.zeros((nodes_per_elem * dim, nodes_per_elem * dim))
 

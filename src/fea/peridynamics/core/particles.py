@@ -48,6 +48,10 @@ class ParticleSystem:
         # Damage field
         self.damage = ti.field(dtype=ti.f32, shape=n_particles)
 
+        # Per-particle 재료 상수 (다중 재료 지원)
+        self.bulk_mod = ti.field(dtype=ti.f32, shape=n_particles)   # 체적 탄성률
+        self.shear_mod = ti.field(dtype=ti.f32, shape=n_particles)  # 전단 탄성률
+
         # For NOSB-PD: shape tensor and deformation gradient
         self.K = ti.Matrix.field(dim, dim, dtype=ti.f32, shape=n_particles)  # Shape tensor
         self.K_inv = ti.Matrix.field(dim, dim, dtype=ti.f32, shape=n_particles)  # Inverse
@@ -194,6 +198,16 @@ class ParticleSystem:
         fixed = np.zeros(self.n_particles, dtype=np.int32)
         fixed[indices] = 1
         self.fixed.from_numpy(fixed)
+
+    def set_material_constants(self, bulk_modulus: float, shear_modulus: float):
+        """단일 재료: 모든 입자에 동일 값 설정."""
+        self.bulk_mod.from_numpy(np.full(self.n_particles, bulk_modulus, dtype=np.float32))
+        self.shear_mod.from_numpy(np.full(self.n_particles, shear_modulus, dtype=np.float32))
+
+    def set_material_constants_per_particle(self, bulk_arr, shear_arr):
+        """다중 재료: 입자별 값 설정."""
+        self.bulk_mod.from_numpy(bulk_arr.astype(np.float32))
+        self.shear_mod.from_numpy(shear_arr.astype(np.float32))
 
     def get_positions(self) -> np.ndarray:
         """Get current particle positions as numpy array."""

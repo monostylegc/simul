@@ -218,7 +218,8 @@ def benchmark_nosb_tension_2d():
 
     # 안정화 마이크로 모듈러스
     c_bond = 9 * E / (math.pi * 1.0 * horizon**3)
-    nosb.compute_force_state_with_stabilization(material.K, material.mu, c_bond)
+    ps.set_material_constants(material.K, material.mu)
+    nosb.compute_force_state_with_stabilization(c_bond)
     elapsed = time.time() - t0
 
     # 해석해: u = strain * L
@@ -293,7 +294,8 @@ def benchmark_nosb_compression_3d():
     t0 = time.time()
     nosb.compute_deformation_gradient()
     c_bond = 18 * material.K / (math.pi * horizon**4)
-    nosb.compute_force_state_with_stabilization(material.K, material.mu, c_bond)
+    ps.set_material_constants(material.K, material.mu)
+    nosb.compute_force_state_with_stabilization(c_bond)
     elapsed = time.time() - t0
 
     # 해석해: 상단 z-변위 = -strain * L

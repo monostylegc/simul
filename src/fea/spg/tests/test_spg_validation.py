@@ -249,7 +249,8 @@ class TestStressComputation:
 
         compute.compute_deformation_gradient()
         compute.compute_strain()
-        compute.compute_internal_force_with_stabilization(mat.lam, mat.mu)
+        ps.set_material_constants(mat.lam, mat.mu)
+        compute.compute_internal_force_with_stabilization()
 
         stress = ps.stress.to_numpy()
 
@@ -379,7 +380,8 @@ class TestEnergyConsistency:
 
         compute.compute_deformation_gradient()
         compute.compute_strain()
-        compute.compute_internal_force_with_stabilization(mat.lam, mat.mu)
+        ps.set_material_constants(mat.lam, mat.mu)
+        compute.compute_internal_force_with_stabilization()
 
         # 변형 에너지: W = 0.5 · Σ σ:ε · V
         stress = ps.stress.to_numpy()

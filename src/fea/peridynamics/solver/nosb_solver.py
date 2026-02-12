@@ -67,6 +67,9 @@ class NOSBSolver:
         self.K[None] = material.get_bulk_modulus()
         self.mu[None] = material.get_shear_modulus()
 
+        # Per-particle 재료 상수 초기화 (단일 재료)
+        particles.set_material_constants(self.K[None], self.mu[None])
+
         # Set stabilization modulus
         material.set_stabilization_modulus(horizon)
         self.c_bond[None] = material.c_bond if material.c_bond else 0.0
@@ -167,10 +170,8 @@ class NOSBSolver:
         # Compute deformation gradient
         self.nosb.compute_deformation_gradient()
 
-        # Compute internal forces with stabilization
+        # Compute internal forces with stabilization (per-particle 재료 사용)
         self.nosb.compute_force_state_with_stabilization(
-            self.K[None],
-            self.mu[None],
             self.c_bond[None]
         )
 

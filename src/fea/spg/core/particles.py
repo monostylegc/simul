@@ -72,6 +72,10 @@ class SPGParticleSystem:
         self.eff_plastic_strain = ti.field(dtype=ti.f64, shape=n_particles)
         self.damage = ti.field(dtype=ti.f64, shape=n_particles)
 
+        # Per-particle 재료 상수 (다중 재료 지원)
+        self.lam_param = ti.field(dtype=ti.f64, shape=n_particles)  # 라메 제1
+        self.mu_param = ti.field(dtype=ti.f64, shape=n_particles)   # 전단 계수
+
         # 경계조건
         self.fixed = ti.field(dtype=ti.i32, shape=n_particles)
 
@@ -201,6 +205,16 @@ class SPGParticleSystem:
         for idx in indices:
             f_ext[idx] = force
         self.f_ext.from_numpy(f_ext)
+
+    def set_material_constants(self, lam: float, mu: float):
+        """단일 재료: 모든 입자에 동일 값 설정."""
+        self.lam_param.from_numpy(np.full(self.n_particles, lam, dtype=np.float64))
+        self.mu_param.from_numpy(np.full(self.n_particles, mu, dtype=np.float64))
+
+    def set_material_constants_per_particle(self, lam_arr, mu_arr):
+        """다중 재료: 입자별 값 설정."""
+        self.lam_param.from_numpy(lam_arr.astype(np.float64))
+        self.mu_param.from_numpy(mu_arr.astype(np.float64))
 
     def get_positions(self) -> np.ndarray:
         return self.x.to_numpy()
