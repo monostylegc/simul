@@ -29,6 +29,14 @@
    - **NRRD 로드 시 File 탭 + NRRD 설정 섹션 자동 표시**
    - **DOM ID 전부 보존** (기존 코드 호환)
 
+0. **Force BC 화살표 동작 개선** - `src/simulator/src/main.js`, `src/simulator/src/pre.js`
+   - **적용 후 표시**: Force BC 적용 버튼 클릭 시 적용면 중심에 빨간 확정 화살표 생성
+   - **Ctrl+드래그 방향 조정**: 적용된 화살표의 방향을 카메라-facing 평면에서 실시간 회전, BC 데이터도 함께 갱신
+   - **depthTest 비활성화**: 화살표가 물체에 가려지지 않고 항상 보이도록 설정
+   - **Ctrl 키 시 브러쉬 비활성화**: Ctrl+클릭/드래그 시 복셀 선택이 되지 않도록 분리
+   - **pre.js 중복 화살표 제거**: `_addBCVisual()`에서 자체 ArrowHelper 생성 제거 (main.js에서만 관리)
+   - **적용 화살표 관리**: `appliedForceArrows` 배열로 추적, BC 제거 시 함께 정리
+
 0. **Pre-process UI 개편** - `src/simulator/index.html`, `src/simulator/src/main.js`, `src/simulator/src/pre.js`
    - **메뉴 이름 변경**: "Boundary Cond." → "Pre-process" (data-menu, dropdown ID 포함)
    - **BC 타입별 색상 즉시 반영**:
