@@ -264,4 +264,75 @@ class PostProcessor {
     cachePositions(positions) {
         this._cachedPositions = positions;
     }
+
+    /**
+     * 수술 전 결과 저장
+     */
+    savePreOpResults() {
+        if (!this.data) return null;
+        return JSON.parse(JSON.stringify(this.data));
+    }
+
+    /**
+     * 수술 전/후 비교 (차이 컬러맵)
+     * @param {Object} preOpData - 수술 전 결과
+     */
+    showComparison(preOpData) {
+        if (!preOpData || !this.data) return;
+
+        const preDisps = preOpData.displacements;
+        const postDisps = this.data.displacements;
+        const n = Math.min(preDisps.length, postDisps.length);
+
+        const diffDisps = [];
+        for (let i = 0; i < n; i++) {
+            diffDisps.push([
+                (postDisps[i][0] || 0) - (preDisps[i][0] || 0),
+                (postDisps[i][1] || 0) - (preDisps[i][1] || 0),
+                (postDisps[i][2] || 0) - (preDisps[i][2] || 0),
+            ]);
+        }
+
+        const diffData = {
+            ...this.data,
+            displacements: diffDisps,
+            info: { ...this.data.info, method: 'difference' },
+        };
+        this.loadResults(diffData);
+    }
+
+    /**
+     * 임플란트 주변 필터 — 지정 중심/반경 내 입자만 표시
+     * @param {THREE.Vector3} center - 필터 중심
+     * @param {number} radius - 반경 (mm), 0이면 전체 표시
+     */
+    filterByRegion(center, radius) {
+        if (!this._points || !this._geometry || radius <= 0) {
+            // 반경 0이면 전체 표시
+            if (this._points) this._points.visible = true;
+            return;
+        }
+
+        const positions = this._geometry.attributes.position;
+        const colors = this._geometry.attributes.color;
+        if (!positions || !colors) return;
+
+        const r2 = radius * radius;
+        const cx = center.x, cy = center.y, cz = center.z;
+
+        // 범위 밖 입자를 투명하게 (색상을 회색으로)
+        for (let i = 0; i < positions.count; i++) {
+            const px = positions.getX(i);
+            const py = positions.getY(i);
+            const pz = positions.getZ(i);
+            const dx = px - cx, dy = py - cy, dz = pz - cz;
+            const dist2 = dx * dx + dy * dy + dz * dz;
+
+            if (dist2 > r2) {
+                colors.setXYZ(i, 0.5, 0.5, 0.5);  // 회색
+            }
+        }
+
+        colors.needsUpdate = true;
+    }
 }

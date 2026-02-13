@@ -1,8 +1,509 @@
+# Spine Surgery Planner — 프로젝트 목표 및 워크플로우
+
+최종 업데이트: 2026-02-14
+
+---
+
+## 프로젝트 목표
+
+**UBE/Biportal 내시경 척추 수술 계획 및 시뮬레이션 도구**
+
+환자의 CT/MRI 영상으로부터 수술 전 계획을 수립하고, 나사/케이지 등 임플란트 배치를 시뮬레이션하며, 구조해석을 통해 수술 안전성을 사전 검증하는 end-to-end 플랫폼.
+
+### 핵심 가치
+- **수술 전 계획 최적화**: 환자별 해부학적 구조에 맞춘 임플란트 위치/크기 결정
+- **구조적 안전성 검증**: 유한요소 해석(FEM/PD/SPG)으로 뼈-임플란트 계면 응력 사전 평가
+- **웹 기반 통합 플랫폼**: 별도 소프트웨어 설치 없이 브라우저에서 전체 워크플로우 수행
+- **병원 배포 대응**: Windows 환경 호환, 직관적 CAE 스타일 UI
+
+### 시스템 아키텍처
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                     Three.js 웹 시뮬레이터 (브라우저)                  │
+│  ┌──────────┬──────────┬──────────┬──────────┬──────────┐          │
+│  │ main.js  │ pre.js   │ post.js  │implant.js│ voxel.js │          │
+│  │ 씬/UI    │ 전처리   │ 후처리   │ 임플란트 │ 복셀화   │          │
+│  └────┬─────┴────┬─────┴────┬─────┴──────────┴──────────┘          │
+│       │          │          │                                       │
+│       └──────────┼──────────┘                                       │
+│                  │ ws.js (WebSocket)                                 │
+└──────────────────┼──────────────────────────────────────────────────┘
+                   │ JSON 양방향 통신
+┌──────────────────┼──────────────────────────────────────────────────┐
+│                  │ FastAPI 서버 (Python)                             │
+│  ┌───────────────▼───────────────┐                                  │
+│  │     ws_handler.py (라우팅)     │                                  │
+│  └──┬────────┬────────┬────────┬─┘                                  │
+│     │        │        │        │                                     │
+│  ┌──▼──┐ ┌──▼──┐ ┌──▼───┐ ┌──▼──────────┐                         │
+│  │세그멘│ │메쉬 │ │자동  │ │해석         │                         │
+│  │테이션│ │추출 │ │재료  │ │파이프라인   │                         │
+│  │파이프│ │파이프│ │매핑  │ │             │                         │
+│  └──┬──┘ └──┬──┘ └──┬──┘ └──┬──────────┘                         │
+│     │       │       │       │                                       │
+│  ┌──▼───────▼───────▼───────▼──────────────────────────────┐       │
+│  │           통합 FEA 프레임워크 (Taichi GPU)               │       │
+│  │  ┌─────┐  ┌──────────────┐  ┌─────┐  ┌──────┐          │       │
+│  │  │ FEM │  │ Peridynamics │  │ SPG │  │Scene │          │       │
+│  │  │정적 │  │ NOSB-PD      │  │무격자│  │접촉  │          │       │
+│  │  │동적 │  │ 파괴해석     │  │극한변│  │해석  │          │       │
+│  │  └─────┘  └──────────────┘  └─────┘  └──────┘          │       │
+│  └─────────────────────────────────────────────────────────┘       │
+└────────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## End-to-End 워크플로우 (6단계)
+
+```
+CT/MRI NIfTI ──→ [1] 세그멘테이션 ──→ [2] 3D 모델 생성 ──→ [3] 수술 도구 배치
+                                                                     │
+                    [6] 후처리 시각화 ←── [5] 구조해석 ←── [4] 전처리  ←┘
+```
+
+### 1단계: 세그멘테이션 (CT/MRI → 라벨맵) — ✅ 완료
+
+환자의 CT 또는 MRI 영상에서 척추골, 디스크, 연조직을 자동으로 분류한다.
+
+| 항목 | 내용 |
+|------|------|
+| **입력** | CT/MRI NIfTI 파일 (`.nii.gz`) |
+| **출력** | 라벨맵 NIfTI (각 복셀에 SpineLabel 값 할당) |
+| **지원 엔진** | TotalSegmentator (CT), TotalSpineSeg (MRI), SpineUnified (CT+MRI 통합, nnU-Net v2) |
+| **라벨 체계** | `SpineLabel` IntEnum — 척추골 C1~Sacrum (101~125), 디스크 C2C3~L5S1 (201~223), 연조직 (301~302) |
+| **핵심 API** | `create_engine("totalseg"|"totalspineseg"|"spine_unified")` → `engine.segment(input, output)` |
+| **핵심 파일** | `src/segmentation/{factory.py, base.py, labels.py, totalseg.py, totalspineseg.py, nnunet_spine.py}` |
+
+**데이터 흐름**: NIfTI → 엔진별 추론 → 엔진 고유 라벨 → `convert_to_standard()` → SpineLabel 통합 라벨맵
+
+---
+
+### 2단계: 3D 모델 생성 (라벨맵 → 표면 메쉬) — ✅ 완료
+
+라벨맵에서 각 해부학적 구조물의 3D 표면 메쉬를 추출하여 웹 뷰어에 표시한다.
+
+| 항목 | 내용 |
+|------|------|
+| **입력** | 라벨맵 NIfTI + 추출할 라벨 목록 |
+| **출력** | 라벨별 메쉬 `{vertices[][], faces[][], material_type, color}` |
+| **알고리즘** | scikit-image `marching_cubes` (이진마스크 → 삼각형 표면) |
+| **후처리** | 선택적 가우시안 평활화 (`sigma=0.8`) |
+| **색상 구분** | bone `#e6d5c3`, disc `#6ba3d6`, soft_tissue `#f0a0b0` |
+| **핵심 API** | `extract_meshes(request, progress_callback)` |
+| **핵심 파일** | `src/server/mesh_extract_pipeline.py` |
+
+**데이터 흐름**: 라벨맵 → 라벨별 이진 마스크 → Marching Cubes → 표면 메쉬 → WebSocket → Three.js BufferGeometry
+
+---
+
+### 3단계: 수술 도구 배치 (임플란트 모델링) — ✅ 완료
+
+나사, 케이지, 로드 등 임플란트 STL 모델을 3D 환경에서 직접 배치하고 수술 계획을 저장한다.
+
+| 항목 | 내용 |
+|------|------|
+| **입력** | 임플란트 STL 파일 + 재료 타입 선택 |
+| **출력** | 수술 계획 JSON `{implants: [{name, position[3], rotation[3], scale[3], material}]}` |
+| **인터랙션** | TransformControls — 이동(Translate) / 회전(Rotate) / 크기(Scale) 모드 전환 |
+| **재료 프리셋** | titanium `#8899aa`, PEEK `#ccbb88`, cobalt-chrome `#99aacc`, stainless steel `#aaaaaa` |
+| **저장/복원** | `exportPlan()` → JSON 다운로드, `importPlan(data)` → 복원 |
+| **추가 기능** | 구체 드릴(복셀 제거)로 뼈 가공 시뮬레이션, Undo/Redo 지원 |
+| **핵심 파일** | `src/simulator/src/implant.js`, `src/simulator/src/voxel.js` |
+
+**데이터 흐름**: STL 로드 → Three.js Mesh 생성 → 사용자 배치(이동/회전) → 수술 계획 JSON 내보내기
+
+---
+
+### 4단계: 전처리 (경계조건 + 재료 설정) — ✅ 완료
+
+해석을 위해 경계조건(고정/하중)과 재료 물성을 설정한다.
+
+| 항목 | 내용 |
+|------|------|
+| **입력** | 3D 메쉬/복셀 모델 + 라벨맵 |
+| **출력** | `AnalysisRequest {positions, volumes, boundary_conditions[], materials[], method}` |
+| **경계조건 설정** | (a) 구체 브러쉬: 복셀 단위 페인팅 선택 <br/> (b) 면 선택: BFS 기반 연결면 확장 (법선 유사도 cos(30°) 기준) |
+| **BC 타입** | Fixed BC (초록 시각화) — 변위 구속 <br/> Force BC (빨강 화살표) — 하중 적용 (Ctrl+드래그로 방향 조정) |
+| **재료 할당** | 자동: SpineLabel → SPINE_MATERIAL_DB (8종) 자동 매핑 (제안값) <br/> 수동: E/ν/ρ 직접 편집 UI |
+| **재료 DB** | bone(15GPa), cancellous(1GPa), disc(10MPa), soft_tissue(1MPa), titanium(110GPa), PEEK(4GPa), cobalt-chrome(230GPa), stainless steel(200GPa) |
+| **핵심 파일** | `src/simulator/src/pre.js`, `src/server/auto_material.py` |
+
+**데이터 흐름**: 복셀 선택 → BC 적용 → 재료 할당 → `buildAnalysisRequest(method)` → AnalysisRequest JSON 조립
+
+---
+
+### 5단계: 구조해석 (FEA) — ✅ 완료
+
+통합 FEA 프레임워크로 3가지 해석 방법 중 하나를 선택하여 구조 응답을 계산한다.
+
+| 항목 | 내용 |
+|------|------|
+| **입력** | `AnalysisRequest {positions, volumes, method, boundary_conditions, materials}` |
+| **출력** | `{displacements[][], stress[], damage[], info{converged, iterations, elapsed_time}}` |
+| **해석 방법** | **FEM** — 유한요소법 (정적/동적, Newton-Raphson, Newmark-beta) <br/> **PD** — Peridynamics (NOSB-PD, 준정적/명시적, 파괴 해석 가능) <br/> **SPG** — Smoothed Particle Galerkin (극한 변형, 무격자법) |
+| **GPU 가속** | 자동 감지: CUDA → Vulkan → CPU 폴백 |
+| **정밀도** | 전체 f64 (배정밀도) 통일 |
+| **다중 물체** | Scene API: 이종 솔버 간 접촉 해석 (노드-노드 페널티, KDTree 기반) |
+| **진행률** | WebSocket 콜백: init → setup → bc → material → solving → postprocess → done |
+| **핵심 API** | `init()` → `create_domain(Method.FEM|PD|SPG, ...)` → `Solver(domain, material).solve()` |
+| **핵심 파일** | `src/server/analysis_pipeline.py`, `src/fea/framework/{runtime.py, domain.py, solver.py, scene.py}` |
+
+**데이터 흐름**: AnalysisRequest → Taichi 초기화 → Domain 생성 → BC/재료 적용 → 솔버 수렴 → 변위/응력/손상 → WebSocket 전송
+
+---
+
+### 6단계: 후처리 시각화 — ✅ 완료
+
+해석 결과를 3D 컬러맵으로 시각화하고 수술 전/후 비교 분석을 수행한다.
+
+| 항목 | 내용 |
+|------|------|
+| **입력** | 해석 결과 `{displacements, stress, damage}` |
+| **출력** | Three.js Points Cloud (Jet 컬러맵 적용) + 컬러바 |
+| **시각화 모드** | Displacement (변위 크기) / Stress (von Mises 응력) / Damage (손상 지수 0~1) |
+| **조절 파라미터** | 변위 확대배율 (기본 10×), 입자 크기, 컬러맵 범위 |
+| **수술 전/후 비교** | 수술 전 결과 저장 → 수술 후 결과와 차이 시각화 |
+| **영역 필터** | 임플란트 주변 반경 지정 → 해당 영역만 응력 분석 |
+| **핵심 파일** | `src/simulator/src/post.js`, `src/simulator/src/colormap.js` |
+
+**데이터 흐름**: 해석 결과 수신 → 모드별 스칼라 정규화 → Jet 컬러맵 변환 → Points Cloud 렌더링 + 컬러바
+
+---
+
+## 프로젝트 디렉토리 구조
+
+```
+src/
+├── core/                          # 핵심 유틸리티
+│   └── volume_io.py              # NIfTI/NPZ 볼륨 I/O
+├── fea/                          # 유한요소/다중 물리 해석
+│   ├── fem/                      # 유한요소법 (FEM)
+│   │   ├── core/                # 메쉬, 적분, 기본 요소
+│   │   ├── material/            # 선형 탄성, Neo-Hookean 재료
+│   │   ├── solver/              # 정적/동적 솔버 (Newton-Raphson, Newmark-β, Central Diff)
+│   │   └── tests/               # FEM 테스트 (39개)
+│   ├── peridynamics/            # Peridynamics (PD)
+│   │   ├── core/                # 입자, 결합, 손상, 이웃
+│   │   ├── material/            # PD 선형 탄성
+│   │   ├── solver/              # NOSB 명시적/준정적 솔버
+│   │   └── tests/               # PD 테스트 (22개)
+│   ├── spg/                     # Smoothed Particle Galerkin (SPG)
+│   │   ├── core/                # RKPM 형상함수, 안정화력 커널
+│   │   ├── material/            # SPG 재료
+│   │   ├── solver/              # SPG 명시적 솔버
+│   │   └── tests/               # SPG 테스트 (31개)
+│   ├── framework/               # 통합 프레임워크 (핵심 인터페이스)
+│   │   ├── runtime.py           # Taichi 런타임 관리 (GPU 자동 감지)
+│   │   ├── domain.py            # 통합 Domain API (Method.FEM/PD/SPG)
+│   │   ├── material.py          # 통합 Material 클래스
+│   │   ├── solver.py            # 통합 Solver 인터페이스
+│   │   ├── scene.py             # 다중 물체 접촉 장면 관리
+│   │   ├── contact.py           # 노드-노드 페널티 접촉 (KDTree)
+│   │   ├── result.py            # SolveResult 데이터 클래스
+│   │   └── _adapters/           # FEM/PD/SPG 어댑터 (Adapter 패턴)
+│   └── tests/                   # 통합 벤치마크 (L4+disc+L5 압축 등)
+├── pipeline/                    # CLI 파이프라인 (Typer)
+│   ├── cli.py                   # 7개 서브커맨드 (segment, solve, report, pipeline, server 등)
+│   ├── config.py                # Pydantic 설정 + TOML 로드
+│   ├── cache.py                 # SHA256 해시 기반 캐시
+│   └── stages/                  # 단계별 처리 모듈 (segment, postprocess, voxelize, solve, report)
+├── segmentation/                # AI 세그멘테이션 엔진
+│   ├── labels.py                # SpineLabel IntEnum (100번대=척추, 200번대=디스크, 300번대=연조직)
+│   ├── factory.py               # create_engine("totalseg"|"totalspineseg"|"spine_unified")
+│   ├── totalseg.py              # TotalSegmentator 래퍼 (CT)
+│   ├── totalspineseg.py         # TotalSpineSeg 래퍼 (MRI)
+│   ├── nnunet_spine.py          # SpineUnified — nnU-Net v2 CT+MRI 통합
+│   └── training/                # 학습 데이터 준비 파이프라인
+├── server/                      # FastAPI 백엔드
+│   ├── app.py                   # REST(업로드) + WebSocket 엔드포인트 + 정적 파일 서빙
+│   ├── models.py                # Pydantic 모델 (AnalysisRequest, SurgicalPlan 등)
+│   ├── ws_handler.py            # WebSocket 메시지 라우팅 (4종 파이프라인 호출)
+│   ├── analysis_pipeline.py     # FEA 프레임워크 호출 파이프라인
+│   ├── segmentation_pipeline.py # 세그멘테이션 엔진 호출
+│   ├── mesh_extract_pipeline.py # Marching Cubes 메쉬 추출
+│   ├── auto_material.py         # SpineLabel → 재료 자동 매핑 (8종 DB)
+│   └── tests/                   # 서버 테스트 (35개)
+└── simulator/                   # Three.js 웹 시뮬레이터
+    ├── index.html               # 메인 HTML (탭 기반 CAE UI)
+    └── src/
+        ├── main.js              # Three.js 씬/UI/이벤트 핸들러 (메인 엔트리)
+        ├── pre.js               # PreProcessor — BC 설정, 재료 할당, 해석 요청 조립
+        ├── post.js              # PostProcessor — 컬러맵 시각화, 전/후 비교
+        ├── implant.js           # ImplantManager — STL 배치, TransformControls
+        ├── voxel.js             # VoxelGrid — 복셀화, 구체 드릴링
+        ├── ws.js                # WSClient — WebSocket 통신
+        ├── colormap.js          # Jet 컬러맵 유틸리티
+        └── nrrd.js              # NRRD 로더 (3D Slicer 호환)
+```
+
+---
+
+## WebSocket 통신 프로토콜
+
+```
+클라이언트 → 서버:
+  {"type": "segment",        "data": SegmentationRequest}   # 세그멘테이션 실행
+  {"type": "extract_meshes", "data": MeshExtractRequest}    # 3D 메쉬 추출
+  {"type": "auto_material",  "data": AutoMaterialRequest}   # 자동 재료 매핑
+  {"type": "run_analysis",   "data": AnalysisRequest}       # FEA 해석 실행
+  {"type": "ping"}                                          # 연결 확인
+
+서버 → 클라이언트:
+  {"type": "progress",         "data": {"step": "init|setup|bc|solving|done", ...}}
+  {"type": "segment_result",   "data": {labels_path, n_labels, label_info[]}}
+  {"type": "meshes_result",    "data": {meshes: [{vertices, faces, color}]}}
+  {"type": "material_result",  "data": {materials: [{name, E, nu, density}]}}
+  {"type": "result",           "data": {displacements, stress, damage, info}}
+  {"type": "error",            "data": {"message": "..."}}
+```
+
+---
+
+## 기술 스택
+
+| 카테고리 | 기술 |
+|---------|------|
+| **프론트엔드** | Three.js (3D 렌더링), ES Modules, TransformControls |
+| **백엔드** | Python 3.13+, FastAPI, WebSocket, Pydantic |
+| **해석 엔진** | Taichi (GPU 가속), NumPy, SciPy |
+| **세그멘테이션** | TotalSegmentator, TotalSpineSeg, nnU-Net v2 |
+| **메쉬 처리** | scikit-image (Marching Cubes), STL 로더 |
+| **CLI** | Typer, Rich (콘솔 출력) |
+| **패키지 관리** | uv (빌드: hatchling) |
+| **테스트** | pytest (309 passed), Playwright (웹 UI) |
+
+---
+
+## 실행 모드
+
+| 모드 | 명령어 | 설명 |
+|------|--------|------|
+| **웹 통합** | `uv run spine-sim server --port 8000` | 해석 서버 + 웹 시뮬레이터 통합 |
+| **웹 단독** | `cd src/simulator && python -m http.server 8080` | 시뮬레이터만 (해석 불가) |
+| **CLI 파이프라인** | `uv run spine-sim pipeline input.nii.gz -o output/` | CT → 해석 → 리포트 자동화 |
+| **개별 스테이지** | `uv run spine-sim segment|solve|report ...` | 단계별 개별 실행 |
+
+---
+
+## 단계별 구현 상태 요약
+
+| 단계 | 기능 | 상태 |
+|------|------|------|
+| 1. 세그멘테이션 | CT/MRI 자동 세그멘테이션 (3 엔진) | ✅ 완료 |
+| 2. 3D 모델 생성 | Marching Cubes 메쉬 추출 | ✅ 완료 |
+| 3. 수술 도구 배치 | 임플란트 STL 배치 + 드릴 | ✅ 완료 |
+| 4. 전처리 | BC 설정 + 재료 할당 | ✅ 완료 |
+| 5. 구조해석 | FEM/PD/SPG 통합 프레임워크 | ✅ 완료 |
+| 6. 후처리 | 컬러맵 시각화 + 비교 분석 | ✅ 완료 |
+| — | 내시경 시뮬레이션 (포탈 시야/사각지대) | 🔲 미구현 |
+
+---
+
 # 프로젝트 진행 상황
 
-최종 업데이트: 2026-02-12
+최종 업데이트: 2026-02-14
 
-## 오늘 작업 내역 (2026-02-12)
+## 오늘 작업 내역 (2026-02-14)
+
+### 완료
+
+1. **DICOM 입력 자동화 파이프라인 구현** — 서버 테스트 35→44개, 전체 44 passed
+
+   DICOM 폴더를 선택하면 **변환 → 세그멘테이션 → 메쉬 추출 → 3D 표시까지 원클릭 자동 처리**.
+
+   - **DICOM → NIfTI 변환 모듈 (신규)**: `src/server/dicom_converter.py`
+     - SimpleITK `ImageSeriesReader` 기반 DICOM 시리즈 읽기
+     - 복수 시리즈 존재 시 슬라이스 수 최대 시리즈 자동 선택
+     - 환자 메타데이터 추출 (Modality, PatientID 등)
+   - **DICOM 업로드 엔드포인트**: `POST /api/upload_dicom`
+     - `webkitdirectory`로 선택한 폴더의 파일들을 flat 저장
+     - 비-DICOM 파일 자동 필터링 (.jpg, .png, .txt 등 제외)
+   - **WS 원클릭 파이프라인**: `run_dicom_pipeline` 메시지 타입
+     - 3단계 연쇄: DICOM변환 → 세그멘테이션 → 메쉬추출
+     - 각 단계마다 `pipeline_step` 중간 진행률 전송
+     - 완료 시 `pipeline_result`로 메쉬 + 메타데이터 전송
+   - **프론트엔드 UI**: DICOM 원클릭 버튼 + 4단계 진행률 표시
+     - File 탭에 보라색 "DICOM 폴더 선택 → 자동 처리" 버튼
+     - 업로드/변환/세그멘테이션/3D모델 4단계 진행 상태 표시
+     - 기존 NIfTI 수동 워크플로우 그대로 유지
+   - **테스트 (신규 9개)**: `src/server/tests/test_dicom_converter.py`
+     - 단일/복수 시리즈, 빈 폴더, 에러 처리, 콜백, 메타데이터 추출
+
+   **신규 파일 (2개)**:
+   - `src/server/dicom_converter.py` — DICOM→NIfTI 변환 모듈
+   - `src/server/tests/test_dicom_converter.py` — 변환 테스트
+
+   **수정 파일 (5개)**:
+   - `src/server/models.py` — DicomPipelineRequest 모델 추가
+   - `src/server/app.py` — POST /api/upload_dicom 엔드포인트
+   - `src/server/ws_handler.py` — run_dicom_pipeline 핸들러
+   - `src/simulator/index.html` — DICOM 원클릭 UI + 진행률
+   - `src/simulator/src/ws.js` — pipeline_step/pipeline_result 디스패치
+   - `src/simulator/src/main.js` — runDicomPipeline() + 콜백
+
+0. **FEA 솔버 종합 개선 (4단계)** — 테스트 275→309개, 전체 309 passed, 0 failed
+
+   #### Phase 1: 정확도 및 안정성
+
+   - **PD f32→f64 전환**: 모든 Peridynamics 필드를 ti.f64로 변환 (에너지 보존 133%→목표 <5%)
+     - 수정: particles.py, bonds.py, nosb.py, nosb_solver.py, explicit.py, quasi_static.py, damage.py, neighbor.py, linear_elastic.py(PD), pd_adapter.py
+     - 테스트: test_particles.py, test_3d.py, benchmark_analytical.py 모두 f64 전환
+
+   - **PD dt 추정 개선**: 파동속도 기반(과대추정) → 스펙트럴 반경 방법으로 교체
+     - `k_eff = (λ+2μ) · V_i · (|dpsi_sum|² + Σ|dpsi_k|²)` → `dt = 0.5 × 2/√(λ_max)`
+     - 예상 ~10x dt 증가 → quasi-static 수렴 속도 대폭 개선
+
+   - **SPG 경계 보정 강화**: 경계 입자의 안정화력을 이웃 수 비율로 스케일링
+     - `support_ratio = n_neighbors_i / max_neighbors` → `G_s *= support_ratio`
+     - 외팔보 오차 17.26% → 목표 <10%
+
+   - **FEM f32→f64 통일**: 모든 FEM 필드/계산을 ti.f64로 변환
+     - 수정: mesh.py, linear_elastic.py(FEM), neo_hookean.py, static_solver.py, fem_adapter.py
+     - 테스트 파일(test_fem.py, test_hex8.py, test_quad4.py)도 f64 통일
+
+   #### Phase 2: GPU 가속
+
+   - **GPU 백엔드 자동 감지 확장**: CUDA→Vulkan→CPU 우선순위 (기존 Vulkan→CPU)
+     - runtime.py에 Backend.METAL 추가, 로깅 강화
+
+   - **접촉 감쇠력 추가**: 법선 방향 점성 감쇠 `f_damp = -2ξ√(k·m_eff) × v_rel_n × n`
+     - contact.py: compute_forces()에 vel_a, vel_b, damping_ratio, mass_a, mass_b 파라미터 추가
+
+   #### Phase 3: 새 기능 추가
+
+   - **FEM 동적 솔버 (신규)**: `src/fea/fem/solver/dynamic_solver.py`
+     - Newmark-beta implicit (γ=0.5, β=0.25): 무조건 안정
+     - Central Difference explicit: 조건부 안정, 충격 문제용
+     - 집중 질량 행렬 (row-sum lumping), Rayleigh 감쇠 (C = α·M + β·K)
+     - 고유진동수 계산 (일반화 고유값 문제)
+     - solver/__init__.py에 DynamicSolver export 추가
+
+   - **NeoHookean 일반화**: TET4 전용(range(4)/range(3)) → 모든 요소 지원(nodes_per_elem/dim)
+
+   #### Phase 4: 테스트 및 검증
+
+   - **FEM 동적 솔버 테스트 (신규)**: `src/fea/fem/tests/test_dynamic.py` (15개)
+     - 솔버 생성, 집중 질량 합, Newmark/Central Diff 스텝, 안정성, BC 강제
+     - 2D 외팔보 1차 고유진동수 해석해 대비 <15% 오차 확인
+     - Rayleigh 감쇠 에너지 감소 확인, 3D HEX8 지원 확인
+
+   - **접촉 해석 Staggered 정적 솔버 버그 수정**: scene.py `_solve_static`
+     - 첫 반복에서 고정 노드 없는 body 단독 해석 → 특이 행렬 발산 (f64 전환 후 표면화)
+     - 수정: 구속 있는 body만 첫 독립 해석 수행
+
+   - **전체 테스트**: 309 passed, 0 failed (FEM 39 + PD 22 + SPG 31 + Framework 19 + Contact 19 + Core 48 + Pipeline 28 + Segmentation 68 + Server 35)
+
+   **신규 파일 (2개)**:
+   - `src/fea/fem/solver/dynamic_solver.py` — FEM 동적 솔버
+   - `src/fea/fem/tests/test_dynamic.py` — 동적 솔버 테스트
+
+   **수정 파일 (21개)**:
+   - PD: particles.py, bonds.py, nosb.py, nosb_solver.py, explicit.py, quasi_static.py, damage.py, neighbor.py, linear_elastic.py(PD), pd_adapter.py, test_particles.py, test_3d.py, benchmark_analytical.py
+   - FEM: mesh.py, linear_elastic.py(FEM), neo_hookean.py, static_solver.py, solver/__init__.py, test_fem.py, test_hex8.py, test_quad4.py
+   - SPG: spg_compute.py
+   - Framework: runtime.py, contact.py, fem_adapter.py, scene.py
+
+## 이전 작업 내역 (2026-02-13)
+
+### 완료
+
+0. **SpineUnified: CT+MRI 통합 척추 세그멘테이션 모델** — 세그멘테이션 테스트 25→68개, 전체 ~275 passed
+   - **Phase 1: 기반 구조 (추론 엔진 + 라벨 매핑 + UI)**
+     - `src/segmentation/labels.py`: `NNUNET_SPINE_TO_STANDARD` (0~50→SpineLabel) + `STANDARD_TO_NNUNET_SPINE` 역매핑 + `NNUNET_IGNORE_LABEL=51`
+     - `src/segmentation/base.py`: `segment()` 시그니처에 `modality: Optional[str] = None` 추가
+     - `src/segmentation/nnunet_spine.py` (신규): SpineUnifiedEngine — nnU-Net v2 기반 CT+MRI 통합 추론
+       - `_detect_modality()`: HU 범위로 CT/MRI 자동 판별
+       - `_prepare_input()`: 2채널 NIfTI 생성 (정규화 영상 + 도메인 채널 CT=1/MRI=0)
+       - `_run_inference()`: nnUNetPredictor 호출
+       - `download_model()`: GitHub Release 가중치 다운로드
+     - `src/segmentation/factory.py`: `spine_unified` 엔진 등록
+     - `src/pipeline/config.py`: `SegmentConfig.engine` Literal에 `spine_unified` 추가
+     - `src/server/models.py`: `SegmentationRequest.modality` 필드 추가
+     - `src/server/segmentation_pipeline.py`: spine_unified 매핑 분기 + modality 전달
+     - `src/simulator/index.html`: 엔진 드롭다운에 "SpineUnified (CT+MRI)" + 모달리티 선택 UI
+     - `src/simulator/src/main.js`: 엔진 변경 시 모달리티 UI 토글 + 요청에 modality 포함
+     - `pyproject.toml`: `seg-unified = ["nnunetv2>=2.5"]`, `seg-train = [...]` 의존성
+   - **Phase 2: 학습 데이터 준비 파이프라인** (`src/segmentation/training/`)
+     - `config.py`: DatasetPaths, PseudoLabelConfig, PreprocessConfig, NnunetConfig, TrainingPipelineConfig
+     - `download.py`: VerSe2020/CTSpine1K/SPIDER 데이터셋 검증 (validate_all, print_validation_report)
+     - `pseudo_label.py`: TotalSpineSeg로 CT 디스크 pseudo-label 생성 + 신뢰도 필터 (min_voxels, 인접 척추 확인, 연결 성분)
+     - `validate_labels.py`: 해부학적 일관성 검증 (척추골 순서, 디스크 위치, 구조물 크기)
+     - `label_merge.py`: GT 척추골 + pseudo-label 디스크 병합 (GT 우선, 불확실=ignore)
+     - `preprocess.py`: CT HU→0-1, MRI z-score→0-1, 도메인 채널 생성
+     - `convert_nnunet.py`: SpineLabel→nnU-Net 연속 정수, 케이스 저장, dataset.json 생성
+   - **Phase 4: CLI 확장**
+     - `spine-sim download-model spine_unified`: 모델 가중치 다운로드
+     - `spine-sim validate-data`: 학습 데이터셋 검증
+     - `spine-sim prepare-training-data /data -o nnUNet_raw`: 학습 데이터 변환 가이드
+     - `spine-sim segment` 에 `--modality` 옵션 추가
+   - **테스트:** 43개 신규
+     - test_nnunet_spine.py: 19개 (라벨 매핑 9 + 엔진 5 + 모달리티 감지 2 + 전처리 3)
+     - test_training.py: 24개 (설정 2 + 전처리 6 + 병합 3 + 변환 5 + 검증 4 + 데이터셋 4)
+   - **신규 파일 11개**: nnunet_spine.py, training/{__init__,config,download,pseudo_label,validate_labels,label_merge,preprocess,convert_nnunet}.py, tests/test_nnunet_spine.py, training/tests/test_training.py
+   - **수정 파일 9개**: labels.py, base.py, totalseg.py, totalspineseg.py, factory.py, config.py, models.py, segmentation_pipeline.py, index.html, main.js, pyproject.toml, cli.py
+
+1. **Phase 2-7: CT/MRI → 수술 시뮬레이션 전체 워크플로우 구현** — 신규 35개 서버 테스트, 전체 251 passed
+   - **Phase 2: 서버-웹 통신 확장**
+     - `src/server/app.py`: REST 파일 업로드 (`POST /api/upload`, `/api/upload_plan`)
+     - `src/server/ws_handler.py`: 4개 새 WS 명령 (segment, extract_meshes, auto_material, run_analysis)
+     - `src/server/models.py`: ImplantPlacement, SurgicalPlan, SegmentationRequest, MeshExtractRequest, AutoMaterialRequest 모델
+     - `src/simulator/src/ws.js`: segment_result, meshes_result, material_result 디스패치 추가
+   - **Phase 3: 세그멘테이션 서버 연동**
+     - `src/server/segmentation_pipeline.py` (신규): NIfTI → TotalSeg/TotalSpineSeg → 표준 라벨맵
+     - File 탭에 NIfTI 업로드 + 엔진 선택 + 진행률 UI 추가
+   - **Phase 4: 3D 모델 생성 (라벨맵 → 메쉬)**
+     - `src/server/mesh_extract_pipeline.py` (신규): 라벨별 Marching Cubes 메쉬 추출 (scikit-image)
+     - JS 메쉬 수신 → BufferGeometry 생성 → 씬 표시 (bone/disc/soft_tissue 색상 구분)
+   - **Phase 5: 수술 모델링 (웹 인터랙티브)**
+     - `src/simulator/src/implant.js` (신규): ImplantManager 클래스 (TransformControls)
+     - STL 임포트, 이동/회전/스케일, 수술 계획 JSON 저장/로드
+   - **Phase 6: 전처리 + 해석 확장**
+     - `src/server/auto_material.py` (신규): SPINE_MATERIAL_DB (8종 재료) + SpineLabel 자동 매핑
+     - Pre-process 탭: 자동 재료 할당(제안) + 수동 E/nu/density 편집 UI
+     - BC는 기존 브러쉬 UI 유지 (사용자 요청: 자동 BC 미구현)
+     - 재료 상세 편집 가능 (사용자 요청: 환자별 뼈/디스크 물성치 다름)
+     - Solve 탭: 단일 도메인/다중 물체 접촉 해석 모드 선택
+   - **Phase 7: 후처리 시각화 확장**
+     - `src/simulator/src/post.js`: 수술 전/후 비교 + 임플란트 주변 응력 필터
+     - Post-process 탭: 수술 전 결과 저장, 전/후 비교 버튼, 필터 반경 슬라이더
+   - **테스트 (35개 신규):**
+     - test_models.py: 20개 (Pydantic 모델 + JSON 직렬화)
+     - test_auto_material.py: 7개 (재료 DB + 자동 할당)
+     - test_mesh_extract.py: 5개 (메쉬 추출 + 라벨 로드)
+     - test_segmentation_pipeline.py: 3개 (파이프라인 에러 처리)
+   - **신규 파일 10개**: segmentation_pipeline.py, mesh_extract_pipeline.py, auto_material.py, implant.js, 테스트 5개 + __init__.py
+   - **수정 파일 7개**: app.py, ws_handler.py, models.py, ws.js, post.js, main.js, index.html
+   - **의존성 추가**: scikit-image
+
+1. **Phase 0+1: CLI 파이프라인 + 자동 세그멘테이션 모듈** — 신규 53개 테스트, 전체 216 passed
+   - **CLI 파이프라인** (`src/pipeline/`)
+     - `cli.py`: Typer CLI — 7개 서브커맨드 (segment, postprocess, voxelize, solve, report, pipeline, server)
+     - `config.py`: Pydantic 설정 모델 + TOML 로드 (PipelineConfig, SegmentConfig 등)
+     - `cache.py`: SHA256 해시 기반 파이프라인 캐시 (입력+스테이지+파라미터 → 결과 재사용)
+     - `stages/base.py`: StageBase ABC + StageResult 데이터클래스
+     - `stages/segment.py`: CT/MRI 자동 세그멘테이션 스테이지 (TotalSeg/TotalSpineSeg 엔진 호출)
+     - `stages/postprocess.py`: SimpleITK 형태학적 후처리 (소 구성요소 제거, 구멍 채우기, 스무딩)
+     - `stages/voxelize.py`: NIfTI → NPZ 복셀 모델 (VolumeLoader 재사용, SpineLabel 재료 매핑)
+     - `stages/solve.py`: FEA 프레임워크 호출 (FEM/PD/SPG 솔버)
+     - `stages/report.py`: JSON + HTML 리포트 생성
+   - **자동 세그멘테이션** (`src/segmentation/`)
+     - `labels.py`: SpineLabel IntEnum — 통합 라벨 체계 (100번대=척추, 200번대=디스크, 300번대=연조직)
+     - `base.py`: SegmentationEngine ABC (is_available, segment, get_standard_label_mapping)
+     - `totalseg.py`: TotalSegmentator Python API 래퍼 (CT, vertebrae C1~L5+sacrum)
+     - `totalspineseg.py`: TotalSpineSeg CLI 래퍼 (MRI, 척추+디스크+척수)
+     - `factory.py`: create_engine() 팩토리 + list_engines()
+     - `labels.py`: TOTALSEG_TO_STANDARD, TOTALSPINESEG_TO_STANDARD 매핑 + convert_to_standard()
+   - **기본 설정 파일**: `config/pipeline.toml`
+   - **pyproject.toml 수정**: typer, nibabel, pydantic, rich 의존성 + build-system(hatchling) + project.scripts
+   - **CLI 실행**: `uv run spine-sim --help` → 7개 서브커맨드 정상 출력
+   - **테스트**:
+     - Pipeline: 캐시 8 + 설정 10 + CLI 10 = 28개
+     - Segmentation: 라벨 16 + 엔진 9 = 25개
+     - 기존 163개 + 신규 53개 = **216 passed, 0 failed**
+
+## 이전 작업 내역 (2026-02-12)
 
 ### 완료
 
@@ -437,6 +938,10 @@
 - **전처리기 (Pre-process)** - 구체 브러쉬 복셀 선택, 경계조건(Fixed/Force), 재료 프리셋 할당
 - **후처리기 (Post-process)** - 변위/응력/손상 컬러맵 시각화, 변위 스케일, 입자 크기
 - **탭 기반 CAE UI** - 상단 탭 바(File/Modeling/Pre-process/Solve/Post-process/View), 우측 컨텍스트 속성 패널, 하단 상태바
+- **CT/MRI 파이프라인** - NIfTI 업로드 → 세그멘테이션 → 3D 모델 생성 (라벨별 메쉬)
+- **임플란트 배치** - STL 임포트, TransformControls (이동/회전/스케일), 수술 계획 JSON 저장/로드
+- **자동 재료 할당** - SpineLabel 기반 8종 프리셋 + 수동 E/nu/density 편집
+- **수술 전/후 비교** - 변위 차이 시각화 + 임플란트 주변 응력 필터 (반경 지정)
 - 50+ FPS 성능
 
 #### 서버 (`src/server/`)
@@ -444,15 +949,42 @@
 - Python FEA framework 직접 호출 (GPU 자동 감지)
 - 진행률 실시간 전송 (init → setup → bc → solving → done)
 - 정적 파일 서빙 (시뮬레이터 + 해석 통합 단일 서버)
+- **REST 업로드**: NIfTI/수술계획 파일 업로드 (`/api/upload`, `/api/upload_plan`)
+- **세그멘테이션 파이프라인**: TotalSeg/TotalSpineSeg 서버 호출 → 표준 라벨맵
+- **메쉬 추출 파이프라인**: 라벨맵 → Marching Cubes → vertices/faces (scikit-image)
+- **자동 재료 매핑**: SpineLabel → 8종 재료 DB 자동 할당 (제안값, 수동 편집 가능)
+- **수술 계획 모델**: ImplantPlacement, SurgicalPlan (JSON 직렬화)
+- **테스트: 35개** (모델 20 + 재료 7 + 메쉬 5 + 세그멘테이션 3)
+
+#### 파이프라인 CLI (`src/pipeline/`)
+- **Typer CLI**: `spine-sim` 명령어 — segment, postprocess, voxelize, solve, report, pipeline, server
+- **Pydantic 설정**: TOML 기반 설정 (PipelineConfig, SegmentConfig 등)
+- **SHA256 캐시**: 입력+스테이지+파라미터 해시로 결과 재사용, 자동 정리
+- **5-스테이지 파이프라인**: segment → postprocess → voxelize → solve → report
+- Rich 콘솔 출력 (진행률 스피너, 컬러)
+
+#### 자동 세그멘테이션 (`src/segmentation/`)
+- **SpineLabel 통합 라벨**: 100번대=척추(C1~SACRUM), 200번대=디스크, 300번대=연조직
+- **TotalSegmentator (CT)**: Python API 래퍼, vertebrae C1~L5+sacrum
+- **TotalSpineSeg (MRI)**: CLI 래퍼, 척추+디스크+척수
+- **SpineUnified (CT+MRI)**: nnU-Net v2 기반 통합 모델, 51 클래스, 2채널 입력 (영상+도메인)
+- **팩토리 패턴**: create_engine("totalseg"|"totalspineseg"|"spine_unified"), 미설치 시 힌트 포함 에러
+- **라벨 변환**: convert_to_standard() — 엔진별 라벨 → SpineLabel 자동 변환
+- **학습 파이프라인**: pseudo-label 생성, 라벨 병합, nnU-Net 형식 변환 (training/)
 
 #### FEA (`src/fea/`)
-- **통합 프레임워크**: Method.FEM/PD/SPG 전환만으로 솔버 교체, GPU 자동 감지
-- **FEM**: TET4, TRI3, HEX8, QUAD4 요소
-- **Peridynamics**: NOSB-PD, 준정적 솔버
+- **통합 프레임워크**: Method.FEM/PD/SPG 전환만으로 솔버 교체, GPU 자동 감지 (CUDA→Vulkan→CPU)
+- **FEM**: TET4, TRI3, HEX8, QUAD4 요소 (f64 정밀도)
+  - **정적 솔버**: Newton-Raphson (비선형), 직접해법 (선형)
+  - **동적 솔버** (신규): Newmark-beta (implicit) + Central Difference (explicit)
+  - Rayleigh 감쇠, 집중 질량, 고유진동수 계산
+- **Peridynamics**: NOSB-PD, 준정적 솔버 (f64 정밀도)
+  - 스펙트럴 반경 기반 dt 추정 (개선)
 - **SPG**: Smoothed Particle Galerkin (극한 변형/파괴 해석)
+  - 경계 입자 적응형 안정화 (개선)
+- **접촉**: 노드-노드 페널티 + 법선 감쇠력, 정적/준정적/명시적 모드
 - **STL 구조해석**: STL → 복셀화 → Peridynamics 파이프라인
-- **다중 물체 접촉 해석**: Scene API, 노드-노드 페널티, 정적/명시적 모드
-- 테스트: 163 passed, 0 failed (FEM 24 + PD 22 + SPG 31 + Framework 19 + Contact 19 + Core 48)
+- 테스트: 309 passed, 0 failed (FEM 39 + PD 22 + SPG 31 + Framework 19 + Contact 19 + Core 48 + Pipeline 28 + Segmentation 68 + Server 35)
 - 벤치마크: FEM 5개 + PD 5개 + SPG 5개 = 15개 해석해 비교
 
 #### FEA 시각화 (`src/fea/visualization/`)
@@ -471,7 +1003,6 @@
 
 ### 🔲 미구현
 - 내시경 시뮬레이션 (웹 버전으로 새로 구현 예정)
-- 임플란트 배치 (나사/케이지)
 
 ## 모듈 구조
 
@@ -486,14 +1017,42 @@ src/
 │   │   ├── ws.js             # WebSocket 클라이언트
 │   │   ├── colormap.js       # Jet 컬러맵
 │   │   ├── pre.js            # 전처리기 (면 선택, BC, 재료)
-│   │   └── post.js           # 후처리기 (컬러맵 시각화)
+│   │   ├── post.js           # 후처리기 (컬러맵 시각화, 전/후 비교)
+│   │   └── implant.js        # 임플란트 매니저 (TransformControls)
 │   ├── stl/                  # 샘플 STL 파일
 │   └── tests/                # 웹 테스트
+├── pipeline/                  # CLI 파이프라인 (Phase 0)
+│   ├── cli.py                # Typer CLI 진입점 (7 서브커맨드)
+│   ├── config.py             # Pydantic 설정 + TOML 로드
+│   ├── cache.py              # SHA256 해시 기반 캐시
+│   ├── stages/               # 5-스테이지 (segment→postprocess→voxelize→solve→report)
+│   └── tests/                # 테스트 (28개)
+├── segmentation/              # 자동 세그멘테이션 (Phase 1)
+│   ├── labels.py             # SpineLabel 통합 라벨 + nnU-Net 매핑
+│   ├── base.py               # SegmentationEngine ABC
+│   ├── totalseg.py           # TotalSegmentator (CT)
+│   ├── totalspineseg.py      # TotalSpineSeg (MRI)
+│   ├── nnunet_spine.py       # SpineUnified (CT+MRI, nnU-Net v2)
+│   ├── factory.py            # create_engine() 팩토리
+│   ├── training/             # 학습 데이터 준비 파이프라인
+│   │   ├── config.py         # 데이터셋 경로 + 전처리 설정
+│   │   ├── download.py       # 데이터셋 검증
+│   │   ├── pseudo_label.py   # CT 디스크 pseudo-label 생성
+│   │   ├── validate_labels.py # 해부학적 일관성 검증
+│   │   ├── label_merge.py    # GT + pseudo-label 병합
+│   │   ├── preprocess.py     # CT/MRI 정규화 + 도메인 채널
+│   │   ├── convert_nnunet.py # nnU-Net 형식 변환
+│   │   └── tests/            # 테스트 (24개)
+│   └── tests/                # 테스트 (44개)
 ├── server/                    # FastAPI + WebSocket 서버
-│   ├── app.py                # 메인 앱 + 정적 파일 서빙
-│   ├── models.py             # Pydantic 데이터 모델
-│   ├── ws_handler.py         # WebSocket 핸들러
-│   └── analysis_pipeline.py  # FEA framework 호출
+│   ├── app.py                # 메인 앱 + REST 업로드 + 정적 파일 서빙
+│   ├── models.py             # Pydantic 데이터 모델 (BC, 재료, 임플란트, 수술계획)
+│   ├── ws_handler.py         # WebSocket 핸들러 (해석, 세그멘테이션, 메쉬, 재료)
+│   ├── analysis_pipeline.py  # FEA framework 호출
+│   ├── segmentation_pipeline.py  # 세그멘테이션 서버 파이프라인
+│   ├── mesh_extract_pipeline.py  # 라벨맵 → Marching Cubes 메쉬
+│   ├── auto_material.py      # SpineLabel 자동 재료 매핑 (8종 DB)
+│   └── tests/                # 서버 테스트 (35개)
 ├── core/                      # 핵심 데이터 구조 (Python)
 └── fea/                       # 유한요소 해석 (Python)
     ├── framework/             # 통합 API (FEM/PD/SPG 전환, GPU 감지, 접촉 해석)
@@ -524,8 +1083,27 @@ src/
 ## 실행 방법
 
 ```bash
+# CLI 파이프라인 도움말
+uv run spine-sim --help
+
+# 전체 파이프라인 실행 (CT → 세그멘테이션 → 후처리 → 복셀화 → 해석 → 리포트)
+uv run spine-sim pipeline input.nii.gz -o output/ --config config/pipeline.toml
+
+# 개별 스테이지 실행
+uv run spine-sim segment input.nii.gz -o output/segment --engine spine_unified --modality CT
+uv run spine-sim postprocess labels.nii.gz -o output/postprocess
+uv run spine-sim voxelize labels.nii.gz -o output/voxelize --resolution 64
+uv run spine-sim solve voxel_model.npz -o output/solve --method spg
+uv run spine-sim report result.npz -o output/report
+
+# SpineUnified 모델 관련
+uv run spine-sim download-model spine_unified          # 가중치 다운로드
+uv run spine-sim validate-data --verse data/VerSe2020  # 데이터셋 검증
+uv run spine-sim prepare-training-data /data -o nnUNet_raw  # 학습 데이터 변환
+
 # 웹 시뮬레이터 + 해석 서버 (권장, 해석 기능 포함)
-uv run python -m src.server.app
+uv run spine-sim server --port 8000
+# 또는: uv run python -m src.server.app
 # 브라우저: http://localhost:8000
 
 # 웹 시뮬레이터만 (해석 기능 없음)

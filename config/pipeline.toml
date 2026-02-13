@@ -1,0 +1,31 @@
+# 파이프라인 기본 설정
+
+on_error = "stop"
+
+[segment]
+engine = "totalseg"
+device = "gpu"
+fast = false
+# roi_subset = ["vertebrae", "discs"]
+
+[postprocess]
+min_volume_mm3 = 100.0
+fill_holes = true
+smooth_sigma = 0.5
+
+[voxelize]
+resolution = 64
+# spacing = 1.0  # None이면 자동 계산
+
+[solve]
+method = "spg"
+E = 12e9
+nu = 0.3
+density = 1850.0
+max_iterations = 10000
+tolerance = 1e-6
+
+[cache]
+enabled = true
+cache_dir = ".cache/pipeline"
+max_size_gb = 10.0
