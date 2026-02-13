@@ -451,11 +451,14 @@ class Scene:
         for contact_iter in range(max_contact_iters):
             # 첫 반복은 참조좌표로 접촉 계산
             if contact_iter == 0:
-                # 먼저 접촉 없이 각 body 독립 해석
+                # 구속이 있는 body만 독립 해석 (고정 노드 없으면 특이 행렬)
                 for body in self._bodies:
                     body.adapter.clear_contact_forces()
                 for i, body in enumerate(self._bodies):
-                    body_results[i] = body.adapter.solve(verbose=verbose, **kwargs)
+                    has_fixed = np.any(body.adapter.mesh.fixed.to_numpy() > 0) \
+                        if hasattr(body.adapter, 'mesh') else True
+                    if has_fixed:
+                        body_results[i] = body.adapter.solve(verbose=verbose, **kwargs)
 
             # 접촉력 계산 (현재 변형 좌표 사용)
             total_contact_force = self._compute_and_inject_contact(contact_algo)

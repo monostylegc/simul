@@ -53,8 +53,8 @@ class NeoHookean(MaterialBase):
         self.lam = youngs_modulus * poisson_ratio / ((1 + poisson_ratio) * (1 - 2*poisson_ratio))
 
         # Store as Taichi fields
-        self._mu = ti.field(dtype=ti.f32, shape=())
-        self._lam = ti.field(dtype=ti.f32, shape=())
+        self._mu = ti.field(dtype=ti.f64, shape=())
+        self._lam = ti.field(dtype=ti.f64, shape=())
         self._mu[None] = self.mu
         self._lam[None] = self.lam
 
@@ -116,7 +116,7 @@ class NeoHookean(MaterialBase):
 
             # Left Cauchy-Green: B = F · Fᵀ
             B = Fg @ Fg.transpose()
-            I = ti.Matrix.identity(ti.f32, dim)
+            I = ti.Matrix.identity(ti.f64, dim)
 
             # Cauchy stress: σ = (1/J) * (μ*(B - I) + λ*ln(J)*I)
             sigma = (1.0 / J_safe) * (mu * (B - I) + lam * ln_J * I)
@@ -132,7 +132,7 @@ class NeoHookean(MaterialBase):
         where P = J·σ·F⁻ᵀ is first Piola-Kirchhoff stress
         """
         mesh.f.fill(0)
-        self._compute_forces_kernel_3d(
+        self._compute_forces_kernel(
             mesh.elements,
             mesh.F,
             mesh.dNdX,
@@ -140,11 +140,12 @@ class NeoHookean(MaterialBase):
             mesh.gauss_vol,
             mesh.f,
             mesh.n_elements,
-            mesh.n_gauss
+            mesh.n_gauss,
+            mesh.nodes_per_elem
         )
 
     @ti.kernel
-    def _compute_forces_kernel_3d(
+    def _compute_forces_kernel(
         self,
         elements: ti.template(),
         F: ti.template(),
@@ -153,9 +154,11 @@ class NeoHookean(MaterialBase):
         gauss_vol: ti.template(),
         f: ti.template(),
         n_elements: int,
-        n_gauss: int
+        n_gauss: int,
+        nodes_per_elem: int
     ):
-        """Compute internal forces using P = J·σ·F⁻ᵀ for 3D TET4."""
+        """내부력 계산 (일반화: 모든 요소 타입 지원)."""
+        dim = ti.static(self.dim)
         for e in range(n_elements):
             for g in range(n_gauss):
                 gp_idx = e * n_gauss + g
@@ -171,13 +174,12 @@ class NeoHookean(MaterialBase):
                 F_inv_T = Fg.inverse().transpose()
                 P = J_safe * sigma @ F_inv_T
 
-                # Accumulate force for each node (4 nodes for TET4)
-                for a in ti.static(range(4)):
+                # 모든 노드에 대해 내부력 누적
+                for a in range(nodes_per_elem):
                     node = elements[e][a]
-                    # f_a = -P · dN_a · vol
-                    f_a = ti.Vector.zero(ti.f32, 3)
-                    for i in ti.static(range(3)):
-                        for j in ti.static(range(3)):
+                    f_a = ti.Vector.zero(ti.f64, dim)
+                    for i in ti.static(range(dim)):
+                        for j in ti.static(range(dim)):
                             f_a[i] -= P[i, j] * dN[a, j] * vol
 
                     ti.atomic_add(f[node], f_a)
@@ -207,7 +209,7 @@ class NeoHookean(MaterialBase):
         F: ti.template(),
         gauss_vol: ti.template(),
         n_gauss: int
-    ) -> ti.f32:
+    ) -> ti.f64:
         """Compute total strain energy."""
         energy = 0.0
         for gp in range(n_gauss):

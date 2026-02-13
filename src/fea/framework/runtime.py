@@ -1,11 +1,14 @@
 """Taichi 런타임 초기화 중앙 관리.
 
-GPU 자동 감지(Vulkan → CPU 폴백), 정밀도 설정, 프로세스당 1회 초기화를 보장한다.
+GPU 자동 감지(CUDA → Vulkan → CPU 폴백), 정밀도 설정, 프로세스당 1회 초기화를 보장한다.
 """
 
 import enum
+import logging
 import taichi as ti
 from typing import Optional
+
+logger = logging.getLogger(__name__)
 
 
 class Backend(enum.Enum):
@@ -13,6 +16,7 @@ class Backend(enum.Enum):
     CPU = "cpu"
     VULKAN = "vulkan"
     CUDA = "cuda"
+    METAL = "metal"
     AUTO = "auto"
 
 
@@ -34,7 +38,7 @@ def init(backend: Backend = Backend.AUTO, precision: Precision = Precision.F64) 
     프로세스당 1회만 실행된다. 중복 호출 시 기존 설정을 반환한다.
 
     Args:
-        backend: 사용할 백엔드 (AUTO면 Vulkan → CPU 폴백)
+        backend: 사용할 백엔드 (AUTO면 CUDA → Vulkan → CPU 폴백)
         precision: 부동소수점 정밀도
 
     Returns:
@@ -53,27 +57,31 @@ def init(backend: Backend = Backend.AUTO, precision: Precision = Precision.F64) 
     _active_precision = precision
 
     if backend == Backend.AUTO:
-        # Vulkan 시도 → CPU 폴백
-        for try_backend in [Backend.VULKAN, Backend.CPU]:
+        # CUDA → Vulkan → CPU 우선순위 (NVIDIA: CUDA, AMD: Vulkan)
+        for try_backend in [Backend.CUDA, Backend.VULKAN, Backend.CPU]:
             try:
                 arch = _backend_to_arch(try_backend)
                 ti.init(arch=arch, default_fp=ti_precision)
                 _active_backend = try_backend
                 _initialized = True
+                logger.info(f"Taichi 초기화: 백엔드={try_backend.value}, 정밀도={precision.value}")
                 return {
                     "backend": _active_backend.value,
                     "precision": _active_precision.value,
                     "already_initialized": False,
                 }
-            except Exception:
+            except Exception as e:
+                logger.debug(f"{try_backend.value} 백엔드 실패: {e}")
                 continue
         # 모든 시도 실패 시 CPU로 강제
         ti.init(arch=ti.cpu, default_fp=ti_precision)
         _active_backend = Backend.CPU
+        logger.warning("모든 GPU 백엔드 실패, CPU 폴백")
     else:
         arch = _backend_to_arch(backend)
         ti.init(arch=arch, default_fp=ti_precision)
         _active_backend = backend
+        logger.info(f"Taichi 초기화: 백엔드={backend.value}, 정밀도={precision.value}")
 
     _initialized = True
     return {
@@ -119,5 +127,6 @@ def _backend_to_arch(backend: Backend):
         Backend.CPU: ti.cpu,
         Backend.VULKAN: ti.vulkan,
         Backend.CUDA: ti.cuda,
+        Backend.METAL: ti.metal,
     }
     return mapping[backend]

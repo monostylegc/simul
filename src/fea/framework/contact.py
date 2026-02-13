@@ -1,7 +1,7 @@
 """접촉 알고리즘.
 
 노드-노드 페널티 접촉을 구현한다.
-KDTree 기반 근접 쌍 탐색 + 페널티 반발력 계산.
+KDTree 기반 근접 쌍 탐색 + 페널티 반발력 + 접촉 감쇠.
 """
 
 import enum
@@ -95,10 +95,16 @@ class NodeNodeContact:
         gaps: np.ndarray,
         penalty: float,
         gap_tol: float,
+        vel_a: Optional[np.ndarray] = None,
+        vel_b: Optional[np.ndarray] = None,
+        damping_ratio: float = 0.0,
+        mass_a: Optional[np.ndarray] = None,
+        mass_b: Optional[np.ndarray] = None,
     ) -> Tuple[np.ndarray, np.ndarray]:
-        """페널티 접촉력 계산.
+        """페널티 접촉력 + 법선 감쇠력 계산.
 
         접촉력 = penalty × penetration × normal
+        감쇠력 = -c × v_rel_n × normal  (c = 2ξ√(k·m))
         penetration = gap_tol - distance (양수일 때만)
         normal = (pos_a[i] - pos_b[j]) / distance (A에서 B로의 방향)
 
@@ -109,6 +115,11 @@ class NodeNodeContact:
             gaps: 각 쌍의 거리 (n_contacts,)
             penalty: 페널티 강성
             gap_tol: 접촉 감지 거리
+            vel_a: 물체 A 속도 (n_a, dim), 감쇠 시 필요
+            vel_b: 물체 B 속도 (n_b, dim), 감쇠 시 필요
+            damping_ratio: 감쇠비 ξ (0~1, 0이면 감쇠 없음)
+            mass_a: 물체 A 질량 (n_a,), 감쇠 시 필요
+            mass_b: 물체 B 질량 (n_b,), 감쇠 시 필요
 
         Returns:
             forces_a: (n_a, dim) — 물체 A에 가해지는 접촉력
@@ -134,9 +145,27 @@ class NodeNodeContact:
         norms = np.maximum(norms, 1e-15)
         normals = diff / norms  # A를 B에서 밀어내는 방향
 
-        # 접촉력: 관통 시에만
+        # 페널티 접촉력: 관통 시에만
         f_mag = penalty * penetration  # (n_contacts,)
         f_vec = f_mag[:, np.newaxis] * normals  # (n_contacts, dim)
+
+        # 접촉 감쇠력 (법선 방향 점성 감쇠)
+        if damping_ratio > 0.0 and vel_a is not None and vel_b is not None:
+            v_rel = vel_a[idx_a] - vel_b[idx_b]  # 상대 속도
+            v_rel_n = np.sum(v_rel * normals, axis=1)  # 법선 방향 상대 속도
+
+            # 유효 질량: m_eff = m_a * m_b / (m_a + m_b)
+            if mass_a is not None and mass_b is not None:
+                m_a = mass_a[idx_a]
+                m_b = mass_b[idx_b]
+                m_eff = m_a * m_b / (m_a + m_b + 1e-30)
+            else:
+                m_eff = np.ones(len(pairs))
+
+            # 감쇠 계수: c = 2ξ√(k·m)
+            c_damp = 2.0 * damping_ratio * np.sqrt(penalty * m_eff)
+            f_damp = -c_damp * v_rel_n  # (n_contacts,)
+            f_vec += f_damp[:, np.newaxis] * normals
 
         # 작용-반작용
         np.add.at(forces_a, idx_a, f_vec)

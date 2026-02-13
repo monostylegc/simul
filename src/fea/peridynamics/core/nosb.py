@@ -53,7 +53,7 @@ class NOSBCompute:
         self.stabilization = stabilization
 
         # Store stabilization as field
-        self.G_s = ti.field(dtype=ti.f32, shape=())
+        self.G_s = ti.field(dtype=ti.f64, shape=())
         self.G_s[None] = stabilization
 
     @ti.kernel
@@ -67,7 +67,7 @@ class NOSBCompute:
         """
         for i in range(self.n_particles):
             # Initialize K to zero
-            K = ti.Matrix.zero(ti.f32, self.dim, self.dim)
+            K = ti.Matrix.zero(ti.f64, self.dim, self.dim)
 
             for k in range(self.bonds.n_neighbors[i]):
                 if self.bonds.broken[i, k] == 0:
@@ -91,7 +91,7 @@ class NOSBCompute:
                 self.particles.K_inv[i] = K.inverse()
             else:
                 # Singular - use identity (will cause issues, but prevents crash)
-                self.particles.K_inv[i] = ti.Matrix.identity(ti.f32, self.dim)
+                self.particles.K_inv[i] = ti.Matrix.identity(ti.f64, self.dim)
 
     @ti.kernel
     def compute_deformation_gradient(self):
@@ -103,7 +103,7 @@ class NOSBCompute:
         """
         for i in range(self.n_particles):
             # Compute N = Σ ω · (η ⊗ ξ) · V
-            N = ti.Matrix.zero(ti.f32, self.dim, self.dim)
+            N = ti.Matrix.zero(ti.f64, self.dim, self.dim)
 
             for k in range(self.bonds.n_neighbors[i]):
                 if self.bonds.broken[i, k] == 0:
@@ -128,8 +128,8 @@ class NOSBCompute:
     @ti.kernel
     def compute_force_state_linear_elastic(
         self,
-        bulk_modulus: ti.f32,
-        shear_modulus: ti.f32
+        bulk_modulus: ti.f64,
+        shear_modulus: ti.f64
     ):
         """Compute forces using linear elastic correspondence material.
 
@@ -148,14 +148,14 @@ class NOSBCompute:
 
         # Reset forces
         for i in range(self.n_particles):
-            self.particles.f[i] = ti.Vector.zero(ti.f32, self.dim)
+            self.particles.f[i] = ti.Vector.zero(ti.f64, self.dim)
 
         # Compute stress and force state
         for i in range(self.n_particles):
             F = self.particles.F[i]
 
             # Small strain tensor: ε = 0.5·(F + Fᵀ) - I
-            I = ti.Matrix.identity(ti.f32, self.dim)
+            I = ti.Matrix.identity(ti.f64, self.dim)
             eps = 0.5 * (F + F.transpose()) - I
             tr_eps = eps.trace()
 
@@ -192,7 +192,7 @@ class NOSBCompute:
     @ti.kernel
     def compute_force_state_with_stabilization(
         self,
-        bond_constant: ti.f32
+        bond_constant: ti.f64
     ):
         """Compute forces with zero-energy mode stabilization.
 
@@ -215,7 +215,7 @@ class NOSBCompute:
 
             F = self.particles.F[i]
 
-            I = ti.Matrix.identity(ti.f32, self.dim)
+            I = ti.Matrix.identity(ti.f64, self.dim)
             eps = 0.5 * (F + F.transpose()) - I
             tr_eps = eps.trace()
 
@@ -228,7 +228,7 @@ class NOSBCompute:
 
         # Reset forces
         for i in range(self.n_particles):
-            self.particles.f[i] = ti.Vector.zero(ti.f32, self.dim)
+            self.particles.f[i] = ti.Vector.zero(ti.f64, self.dim)
 
         # Second pass: compute forces with proper antisymmetry
         for i in range(self.n_particles):
@@ -267,7 +267,7 @@ class NOSBCompute:
                     eta = self.particles.x[j] - self.particles.x[i]
                     eta_len = eta.norm()
 
-                    f_stab = ti.Vector.zero(ti.f32, self.dim)
+                    f_stab = ti.Vector.zero(ti.f64, self.dim)
                     if eta_len > 1e-10 and xi_len > 1e-10:
                         stretch = (eta_len - xi_len) / xi_len
                         f_stab = G_s * bond_constant * stretch * omega * (eta / eta_len) * V_j

@@ -23,7 +23,7 @@ def _create_quad4_mesh(nx, ny, Lx, Ly, ox=0.0, oy=0.0):
     for j in range(ny + 1):
         for i in range(nx + 1):
             nodes.append([ox + i * dx, oy + j * dy])
-    nodes = np.array(nodes, dtype=np.float32)
+    nodes = np.array(nodes, dtype=np.float64)
 
     elements = []
     for ey in range(ny):
@@ -49,7 +49,7 @@ def _create_hex8_mesh(nx, ny, nz, Lx, Ly, Lz, ox=0.0, oy=0.0, oz=0.0):
         for j in range(ny + 1):
             for i in range(nx + 1):
                 nodes.append([ox + i * dx, oy + j * dy, oz + k * dz])
-    nodes = np.array(nodes, dtype=np.float32)
+    nodes = np.array(nodes, dtype=np.float64)
 
     elements = []
     for ez in range(nz):
@@ -110,9 +110,9 @@ class FEMAdapter(AdapterBase):
         self.n_nodes = n_nodes
 
         # 접촉력 버퍼 (numpy, 매 반복 시 f_ext에 합산)
-        self._contact_forces = np.zeros((n_nodes, dim), dtype=np.float32)
+        self._contact_forces = np.zeros((n_nodes, dim), dtype=np.float64)
         # 사용자 지정 외력 저장 (접촉력 초기화 시 복원용)
-        self._user_f_ext = np.zeros((n_nodes, dim), dtype=np.float32)
+        self._user_f_ext = np.zeros((n_nodes, dim), dtype=np.float64)
 
         # 경계조건 적용
         if domain._fixed_indices is not None:
@@ -127,10 +127,10 @@ class FEMAdapter(AdapterBase):
             if forces_val.ndim == 1:
                 # 모든 노드에 동일 힘 → (n, dim) 배열로 확장
                 forces_arr = np.tile(
-                    forces_val.astype(np.float32), (len(indices), 1)
+                    forces_val.astype(np.float64), (len(indices), 1)
                 )
             else:
-                forces_arr = forces_val.astype(np.float32)
+                forces_arr = forces_val.astype(np.float64)
             self._user_f_ext[indices] = forces_arr
             self.mesh.set_nodal_forces(indices, forces_arr)
 
@@ -185,7 +185,7 @@ class FEMAdapter(AdapterBase):
     def inject_contact_forces(self, indices: np.ndarray, forces: np.ndarray):
         """접촉력 주입 (f_ext에 추가)."""
         for i, idx in enumerate(indices):
-            self._contact_forces[idx] += forces[i].astype(np.float32)
+            self._contact_forces[idx] += forces[i].astype(np.float64)
 
     def clear_contact_forces(self):
         """접촉력 초기화."""

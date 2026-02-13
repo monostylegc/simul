@@ -8,7 +8,7 @@ import taichi as ti
 @pytest.fixture(scope="module", autouse=True)
 def init_taichi():
     """Initialize Taichi once per module."""
-    ti.init(arch=ti.cpu, default_fp=ti.f32)
+    ti.init(arch=ti.cpu, default_fp=ti.f64)
 
 
 class TestParticleSystem:

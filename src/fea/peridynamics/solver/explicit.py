@@ -49,18 +49,18 @@ class ExplicitSolver:
         self.n_particles = particles.n_particles
 
         # Store micromodulus as field
-        self.c = ti.field(dtype=ti.f32, shape=())
+        self.c = ti.field(dtype=ti.f64, shape=())
         self.c[None] = micromodulus
 
         # Store previous acceleration for Verlet
-        self.a_old = ti.Vector.field(self.dim, dtype=ti.f32, shape=self.n_particles)
+        self.a_old = ti.Vector.field(self.dim, dtype=ti.f64, shape=self.n_particles)
 
         # Simulation time
         self.time = 0.0
         self.step_count = 0
 
     @ti.kernel
-    def _position_update(self, dt: ti.f32):
+    def _position_update(self, dt: ti.f64):
         """Update positions: x(t+dt) = x(t) + v*dt + 0.5*a*dt^2."""
         for i in range(self.n_particles):
             if self.particles.fixed[i] == 0:
@@ -86,7 +86,7 @@ class ExplicitSolver:
         """
         # Reset forces
         for i in range(self.n_particles):
-            self.particles.f[i] = ti.Vector.zero(ti.f32, self.dim)
+            self.particles.f[i] = ti.Vector.zero(ti.f64, self.dim)
 
         # Compute bond forces
         for i in range(self.n_particles):
@@ -117,7 +117,7 @@ class ExplicitSolver:
                         self.particles.f[i] += f_vec
 
     @ti.kernel
-    def _velocity_update(self, dt: ti.f32, damping: ti.f32):
+    def _velocity_update(self, dt: ti.f64, damping: ti.f64):
         """Update velocities: v(t+dt) = v(t) + 0.5*(a_old + a_new)*dt."""
         for i in range(self.n_particles):
             if self.particles.fixed[i] == 0:
@@ -131,8 +131,8 @@ class ExplicitSolver:
                     0.5 * (self.a_old[i] + self.particles.a[i]) * dt
                 )
             else:
-                self.particles.v[i] = ti.Vector.zero(ti.f32, self.dim)
-                self.particles.a[i] = ti.Vector.zero(ti.f32, self.dim)
+                self.particles.v[i] = ti.Vector.zero(ti.f64, self.dim)
+                self.particles.a[i] = ti.Vector.zero(ti.f64, self.dim)
 
     def step(self, damage_model: Optional["DamageModel"] = None):
         """Perform one time step.
@@ -218,7 +218,7 @@ class ExplicitSolver:
         return self._compute_kinetic_energy()
 
     @ti.kernel
-    def _compute_kinetic_energy(self) -> ti.f32:
+    def _compute_kinetic_energy(self) -> ti.f64:
         """Compute kinetic energy: 0.5 * sum(m * v^2)."""
         KE = 0.0
         for i in range(self.n_particles):
@@ -231,7 +231,7 @@ class ExplicitSolver:
         return self._compute_strain_energy()
 
     @ti.kernel
-    def _compute_strain_energy(self) -> ti.f32:
+    def _compute_strain_energy(self) -> ti.f64:
         """Compute strain energy: 0.5 * c * sum(omega * s^2 * |xi| * V_i * V_j)."""
         SE = 0.0
         for i in range(self.n_particles):

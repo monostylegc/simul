@@ -75,7 +75,7 @@ class NeighborSearch:
         self.grid_dims_field = ti.Vector.field(dim, dtype=ti.i32, shape=())
         self.grid_dims_field[None] = ti.Vector(list(self.grid_dims)[:dim])
 
-        self.domain_min_field = ti.Vector.field(dim, dtype=ti.f32, shape=())
+        self.domain_min_field = ti.Vector.field(dim, dtype=ti.f64, shape=())
         self.domain_min_field[None] = ti.Vector([float(domain_min[i]) for i in range(dim)])
 
     @ti.func

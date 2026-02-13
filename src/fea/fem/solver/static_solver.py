@@ -112,7 +112,7 @@ class StaticSolver:
 
         # Store result
         u_reshaped = u.reshape(-1, self.dim)
-        self.mesh.u.from_numpy(u_reshaped.astype(np.float32))
+        self.mesh.u.from_numpy(u_reshaped.astype(np.float64))
 
         # 응력 계산 (다중 재료: 기본 재료로 전체 계산 후 사용)
         self.mesh.compute_deformation_gradient()
@@ -185,7 +185,7 @@ class StaticSolver:
 
             for ls in range(5):
                 u_trial = u_current + alpha * du
-                self.mesh.u.from_numpy(u_trial.reshape(-1, self.dim).astype(np.float32))
+                self.mesh.u.from_numpy(u_trial.reshape(-1, self.dim).astype(np.float64))
 
                 self.mesh.compute_deformation_gradient()
                 self.material.compute_stress(self.mesh)
@@ -258,7 +258,7 @@ class StaticSolver:
             # Update displacement
             u = self.mesh.u.to_numpy().flatten()
             u += 0.1 * du  # Damped update
-            self.mesh.u.from_numpy(u.reshape(-1, self.dim).astype(np.float32))
+            self.mesh.u.from_numpy(u.reshape(-1, self.dim).astype(np.float64))
 
         return {"converged": False, "iterations": self.max_iterations}
 

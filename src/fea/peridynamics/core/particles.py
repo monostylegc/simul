@@ -33,30 +33,30 @@ class ParticleSystem:
         self.n_particles = n_particles
         self.dim = dim
 
-        # Position and velocity fields
-        self.X = ti.Vector.field(dim, dtype=ti.f32, shape=n_particles)  # Reference
-        self.x = ti.Vector.field(dim, dtype=ti.f32, shape=n_particles)  # Current
-        self.v = ti.Vector.field(dim, dtype=ti.f32, shape=n_particles)  # Velocity
-        self.a = ti.Vector.field(dim, dtype=ti.f32, shape=n_particles)  # Acceleration
-        self.f = ti.Vector.field(dim, dtype=ti.f32, shape=n_particles)  # Force
+        # Position and velocity fields (f64 정밀도: 에너지 보존 개선)
+        self.X = ti.Vector.field(dim, dtype=ti.f64, shape=n_particles)  # Reference
+        self.x = ti.Vector.field(dim, dtype=ti.f64, shape=n_particles)  # Current
+        self.v = ti.Vector.field(dim, dtype=ti.f64, shape=n_particles)  # Velocity
+        self.a = ti.Vector.field(dim, dtype=ti.f64, shape=n_particles)  # Acceleration
+        self.f = ti.Vector.field(dim, dtype=ti.f64, shape=n_particles)  # Force
 
         # Material properties
-        self.volume = ti.field(dtype=ti.f32, shape=n_particles)
-        self.density = ti.field(dtype=ti.f32, shape=n_particles)
-        self.mass = ti.field(dtype=ti.f32, shape=n_particles)
+        self.volume = ti.field(dtype=ti.f64, shape=n_particles)
+        self.density = ti.field(dtype=ti.f64, shape=n_particles)
+        self.mass = ti.field(dtype=ti.f64, shape=n_particles)
 
         # Damage field
-        self.damage = ti.field(dtype=ti.f32, shape=n_particles)
+        self.damage = ti.field(dtype=ti.f64, shape=n_particles)
 
         # Per-particle 재료 상수 (다중 재료 지원)
-        self.bulk_mod = ti.field(dtype=ti.f32, shape=n_particles)   # 체적 탄성률
-        self.shear_mod = ti.field(dtype=ti.f32, shape=n_particles)  # 전단 탄성률
+        self.bulk_mod = ti.field(dtype=ti.f64, shape=n_particles)   # 체적 탄성률
+        self.shear_mod = ti.field(dtype=ti.f64, shape=n_particles)  # 전단 탄성률
 
         # For NOSB-PD: shape tensor and deformation gradient
-        self.K = ti.Matrix.field(dim, dim, dtype=ti.f32, shape=n_particles)  # Shape tensor
-        self.K_inv = ti.Matrix.field(dim, dim, dtype=ti.f32, shape=n_particles)  # Inverse
-        self.F = ti.Matrix.field(dim, dim, dtype=ti.f32, shape=n_particles)  # Deformation gradient
-        self.P = ti.Matrix.field(dim, dim, dtype=ti.f32, shape=n_particles)  # 1st Piola-Kirchhoff
+        self.K = ti.Matrix.field(dim, dim, dtype=ti.f64, shape=n_particles)  # Shape tensor
+        self.K_inv = ti.Matrix.field(dim, dim, dtype=ti.f64, shape=n_particles)  # Inverse
+        self.F = ti.Matrix.field(dim, dim, dtype=ti.f64, shape=n_particles)  # Deformation gradient
+        self.P = ti.Matrix.field(dim, dim, dtype=ti.f64, shape=n_particles)  # 1st Piola-Kirchhoff
 
         # Boundary condition flags
         self.fixed = ti.field(dtype=ti.i32, shape=n_particles)  # 0=free, 1=fixed
@@ -93,7 +93,7 @@ class ParticleSystem:
                         )
                         positions.append(pos)
 
-        positions = np.array(positions, dtype=np.float32)
+        positions = np.array(positions, dtype=np.float64)
         n_actual = len(positions)
 
         if n_actual != self.n_particles:
@@ -122,23 +122,23 @@ class ParticleSystem:
             volumes: Particle volumes (n_particles,)
             density: Material density
         """
-        self.X.from_numpy(positions.astype(np.float32))
-        self.x.from_numpy(positions.astype(np.float32))
-        self.volume.from_numpy(volumes.astype(np.float32))
+        self.X.from_numpy(positions.astype(np.float64))
+        self.x.from_numpy(positions.astype(np.float64))
+        self.volume.from_numpy(volumes.astype(np.float64))
 
-        densities = np.full(self.n_particles, density, dtype=np.float32)
+        densities = np.full(self.n_particles, density, dtype=np.float64)
         self.density.from_numpy(densities)
 
         masses = volumes * density
-        self.mass.from_numpy(masses.astype(np.float32))
+        self.mass.from_numpy(masses.astype(np.float64))
 
         # Initialize other fields
         self._init_fields()
 
     def _set_uniform_properties(self, density: float, volume: float):
         """Set uniform density and volume for all particles."""
-        densities = np.full(self.n_particles, density, dtype=np.float32)
-        volumes = np.full(self.n_particles, volume, dtype=np.float32)
+        densities = np.full(self.n_particles, density, dtype=np.float64)
+        volumes = np.full(self.n_particles, volume, dtype=np.float64)
         masses = volumes * density
 
         self.density.from_numpy(densities)
@@ -151,23 +151,23 @@ class ParticleSystem:
     def _init_fields(self):
         """Initialize velocity, acceleration, damage to zero."""
         for i in range(self.n_particles):
-            self.v[i] = ti.Vector.zero(ti.f32, self.dim)
-            self.a[i] = ti.Vector.zero(ti.f32, self.dim)
-            self.f[i] = ti.Vector.zero(ti.f32, self.dim)
+            self.v[i] = ti.Vector.zero(ti.f64, self.dim)
+            self.a[i] = ti.Vector.zero(ti.f64, self.dim)
+            self.f[i] = ti.Vector.zero(ti.f64, self.dim)
             self.damage[i] = 0.0
             self.fixed[i] = 0
 
             # Initialize tensors to identity
-            self.K[i] = ti.Matrix.identity(ti.f32, self.dim)
-            self.K_inv[i] = ti.Matrix.identity(ti.f32, self.dim)
-            self.F[i] = ti.Matrix.identity(ti.f32, self.dim)
-            self.P[i] = ti.Matrix.zero(ti.f32, self.dim, self.dim)
+            self.K[i] = ti.Matrix.identity(ti.f64, self.dim)
+            self.K_inv[i] = ti.Matrix.identity(ti.f64, self.dim)
+            self.F[i] = ti.Matrix.identity(ti.f64, self.dim)
+            self.P[i] = ti.Matrix.zero(ti.f64, self.dim, self.dim)
 
     @ti.kernel
     def reset_forces(self):
         """Reset force accumulator to zero."""
         for i in range(self.n_particles):
-            self.f[i] = ti.Vector.zero(ti.f32, self.dim)
+            self.f[i] = ti.Vector.zero(ti.f64, self.dim)
 
     @ti.kernel
     def apply_body_force(self, force: ti.template()):
@@ -187,7 +187,7 @@ class ParticleSystem:
             if self.fixed[i] == 0 and self.mass[i] > 0:
                 self.a[i] = self.f[i] / self.mass[i]
             else:
-                self.a[i] = ti.Vector.zero(ti.f32, self.dim)
+                self.a[i] = ti.Vector.zero(ti.f64, self.dim)
 
     def set_fixed_particles(self, indices: np.ndarray):
         """Set particles as fixed (Dirichlet BC).
@@ -201,13 +201,13 @@ class ParticleSystem:
 
     def set_material_constants(self, bulk_modulus: float, shear_modulus: float):
         """단일 재료: 모든 입자에 동일 값 설정."""
-        self.bulk_mod.from_numpy(np.full(self.n_particles, bulk_modulus, dtype=np.float32))
-        self.shear_mod.from_numpy(np.full(self.n_particles, shear_modulus, dtype=np.float32))
+        self.bulk_mod.from_numpy(np.full(self.n_particles, bulk_modulus, dtype=np.float64))
+        self.shear_mod.from_numpy(np.full(self.n_particles, shear_modulus, dtype=np.float64))
 
     def set_material_constants_per_particle(self, bulk_arr, shear_arr):
         """다중 재료: 입자별 값 설정."""
-        self.bulk_mod.from_numpy(bulk_arr.astype(np.float32))
-        self.shear_mod.from_numpy(shear_arr.astype(np.float32))
+        self.bulk_mod.from_numpy(bulk_arr.astype(np.float64))
+        self.shear_mod.from_numpy(shear_arr.astype(np.float64))
 
     def get_positions(self) -> np.ndarray:
         """Get current particle positions as numpy array."""

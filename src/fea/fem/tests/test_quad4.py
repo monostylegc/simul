@@ -11,7 +11,7 @@ import taichi as ti
 @pytest.fixture(scope="module", autouse=True)
 def init_taichi():
     """모듈당 한 번 Taichi 초기화."""
-    ti.init(arch=ti.cpu, default_fp=ti.f32)
+    ti.init(arch=ti.cpu, default_fp=ti.f64)
 
 
 class TestQUAD4ShapeFunctions:
@@ -104,7 +104,7 @@ class TestQUAD4Mesh:
             [1.0, 0.0],  # 1
             [1.0, 1.0],  # 2
             [0.0, 1.0],  # 3
-        ], dtype=np.float32)
+        ], dtype=np.float64)
 
         elements = np.array([[0, 1, 2, 3]], dtype=np.int32)
 
@@ -132,7 +132,7 @@ class TestQUAD4Mesh:
             [L, 0.0],
             [L, W],
             [0.0, W],
-        ], dtype=np.float32)
+        ], dtype=np.float64)
 
         elements = np.array([[0, 1, 2, 3]], dtype=np.int32)
 
@@ -159,7 +159,7 @@ class TestQUAD4Mesh:
             [1.0, 0.0],
             [1.0, 1.0],
             [0.0, 1.0],
-        ], dtype=np.float32)
+        ], dtype=np.float64)
 
         elements = np.array([[0, 1, 2, 3]], dtype=np.int32)
 
@@ -196,7 +196,7 @@ class TestQUAD4Mesh2x2:
         for j in range(ny+1):
             for i in range(nx+1):
                 nodes.append([i * spacing, j * spacing])
-        nodes = np.array(nodes, dtype=np.float32)
+        nodes = np.array(nodes, dtype=np.float64)
 
         # 요소 연결성
         elements = []

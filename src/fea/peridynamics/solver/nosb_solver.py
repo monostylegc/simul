@@ -60,9 +60,9 @@ class NOSBSolver:
         self.nosb = NOSBCompute(particles, bonds, stabilization)
 
         # Material parameters as fields
-        self.K = ti.field(dtype=ti.f32, shape=())
-        self.mu = ti.field(dtype=ti.f32, shape=())
-        self.c_bond = ti.field(dtype=ti.f32, shape=())
+        self.K = ti.field(dtype=ti.f64, shape=())
+        self.mu = ti.field(dtype=ti.f64, shape=())
+        self.c_bond = ti.field(dtype=ti.f64, shape=())
 
         self.K[None] = material.get_bulk_modulus()
         self.mu[None] = material.get_shear_modulus()
@@ -83,7 +83,7 @@ class NOSBSolver:
         self.dt = dt
 
         # Viscous damping coefficient
-        self.viscous_damping = ti.field(dtype=ti.f32, shape=())
+        self.viscous_damping = ti.field(dtype=ti.f64, shape=())
         self.viscous_damping[None] = viscous_damping
 
         # For kinetic damping
@@ -92,33 +92,69 @@ class NOSBSolver:
         self.iteration = 0
 
     def _estimate_stable_dt(self) -> float:
-        """Estimate stable time step for NOSB-PD.
+        """안정 시간 간격 추정 (스펙트럴 반경 방법).
 
-        Uses a conservative estimate based on material properties.
+        SPG 솔버와 동일한 방법론: K_inv 기반 유효 강성으로부터
+        spectral radius를 추정한다.
+        k_eff = (λ+2μ) · V_i · (|dpsi_sum|² + Σ|dpsi_k|²)
+        dt_crit = 2 / √(k_eff_max / m), safety factor 0.5
         """
-        vol = self.particles.volume.to_numpy()
-        mass = self.particles.mass.to_numpy()
+        K_inv_np = self.particles.K_inv.to_numpy()
+        xi_np = self.bonds.xi.to_numpy()
+        omega_np = self.bonds.omega.to_numpy()
+        n_nbr_np = self.bonds.n_neighbors.to_numpy()
+        vol_np = self.particles.volume.to_numpy()
+        mass_np = self.particles.mass.to_numpy()
+        broken_np = self.bonds.broken.to_numpy()
 
-        avg_vol = np.mean(vol)
-        avg_mass = np.mean(mass)
-
-        # Wave speed from elastic moduli
-        rho = np.mean(self.particles.density.to_numpy())
-        c_wave = np.sqrt((self.K[None] + 4*self.mu[None]/3) / (rho + 1e-20))
-
-        # Spacing estimate
-        if self.dim == 2:
-            spacing = np.sqrt(avg_vol)
+        K_val = float(self.K[None])
+        mu_val = float(self.mu[None])
+        if self.dim == 3:
+            lam = K_val - 2.0 * mu_val / 3.0
         else:
-            spacing = np.power(avg_vol, 1.0/3.0)
+            lam = K_val - mu_val
+        modulus = lam + 2.0 * mu_val
 
-        # Very conservative CFL for NOSB (correspondence models need smaller dt)
-        dt = 0.01 * spacing / (c_wave + 1e-20)
+        n = self.n_particles
+        dim = self.dim
 
-        return max(1e-12, min(dt, 1e-4))
+        lambda_max = 0.0
+        for i in range(n):
+            if mass_np[i] < 1e-30:
+                continue
+
+            # 유효 형상함수 기울기 추정: ω · K_inv · ξ
+            K_inv_i = K_inv_np[i]
+            dpsi_sum = np.zeros(dim)
+            dpsi_sq_sum = 0.0
+
+            for k in range(n_nbr_np[i]):
+                if broken_np[i, k] == 0:
+                    xi_k = xi_np[i, k, :dim]
+                    w_k = omega_np[i, k]
+                    # 형상함수 기울기 근사: dpsi_k ≈ ω · K_inv · ξ · V_j
+                    dpsi_k = w_k * K_inv_i @ xi_k
+                    dpsi_sum += dpsi_k
+                    dpsi_sq_sum += np.sum(dpsi_k ** 2)
+
+            dpsi_sum_sq = np.sum(dpsi_sum ** 2)
+            k_eff = modulus * vol_np[i] * (dpsi_sum_sq + dpsi_sq_sum)
+            lam_i = k_eff / mass_np[i]
+            lambda_max = max(lambda_max, lam_i)
+
+        if lambda_max > 0:
+            dt_crit = 2.0 / np.sqrt(lambda_max)
+            return 0.5 * dt_crit
+        else:
+            # 폴백: 보수적 CFL
+            rho = np.mean(self.particles.density.to_numpy())
+            avg_vol = np.mean(vol_np)
+            c_wave = np.sqrt((K_val + 4 * mu_val / 3) / (rho + 1e-20))
+            spacing = np.power(avg_vol, 1.0 / self.dim) if self.dim == 3 else np.sqrt(avg_vol)
+            return 0.1 * spacing / (c_wave + 1e-20)
 
     @ti.kernel
-    def _velocity_verlet_step1(self, dt: ti.f32):
+    def _velocity_verlet_step1(self, dt: ti.f64):
         """Position update."""
         for i in range(self.n_particles):
             if self.particles.fixed[i] == 0:
@@ -126,7 +162,7 @@ class NOSBSolver:
                     0.5 * self.particles.a[i] * dt * dt
 
     @ti.kernel
-    def _velocity_verlet_step2(self, dt: ti.f32) -> ti.f32:
+    def _velocity_verlet_step2(self, dt: ti.f64) -> ti.f64:
         """Velocity update with viscous damping. Returns kinetic energy."""
         ke = 0.0
         damping = 1.0 - self.viscous_damping[None]  # Damping factor per step
@@ -141,18 +177,18 @@ class NOSBSolver:
                 v_sq = self.particles.v[i].dot(self.particles.v[i])
                 ke += 0.5 * self.particles.mass[i] * v_sq
             else:
-                self.particles.v[i] = ti.Vector.zero(ti.f32, self.dim)
-                self.particles.a[i] = ti.Vector.zero(ti.f32, self.dim)
+                self.particles.v[i] = ti.Vector.zero(ti.f64, self.dim)
+                self.particles.a[i] = ti.Vector.zero(ti.f64, self.dim)
         return ke
 
     @ti.kernel
     def _reset_velocities(self):
         """Reset velocities to zero."""
         for i in range(self.n_particles):
-            self.particles.v[i] = ti.Vector.zero(ti.f32, self.dim)
+            self.particles.v[i] = ti.Vector.zero(ti.f64, self.dim)
 
     @ti.kernel
-    def _compute_residual_norm(self) -> ti.f32:
+    def _compute_residual_norm(self) -> ti.f64:
         """Compute residual force norm."""
         norm_sq = 0.0
         for i in range(self.n_particles):

@@ -5,7 +5,7 @@ import numpy as np
 import taichi as ti
 
 # Initialize Taichi once for all tests
-ti.init(arch=ti.cpu, default_fp=ti.f32)
+ti.init(arch=ti.cpu, default_fp=ti.f64)
 
 
 def test_element_types():
@@ -38,7 +38,7 @@ def test_mesh_creation():
         [1.0, 0.0, 0.0],
         [0.0, 1.0, 0.0],
         [0.0, 0.0, 1.0]
-    ], dtype=np.float32)
+    ], dtype=np.float64)
 
     elements = np.array([[0, 1, 2, 3]], dtype=np.int32)
 
@@ -116,7 +116,7 @@ def test_solver_linear_tet():
         [0.5, 1.0, 0.0],
         [0.5, 0.5, 1.0],
         [0.5, 0.5, -1.0],
-    ], dtype=np.float32)
+    ], dtype=np.float64)
 
     elements = np.array([
         [0, 1, 2, 3],
@@ -157,7 +157,7 @@ def test_2d_triangle():
         [0.0, 0.0],
         [1.0, 0.0],
         [0.5, 1.0],
-    ], dtype=np.float32)
+    ], dtype=np.float64)
 
     elements = np.array([[0, 1, 2]], dtype=np.int32)
 

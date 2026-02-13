@@ -118,11 +118,11 @@ class LinearElasticMaterial2D:
         self.micromodulus = 9 * youngs_modulus / (math.pi * thickness * horizon**3)
 
         # Store as field for kernel access
-        self.c = ti.field(dtype=ti.f32, shape=())
+        self.c = ti.field(dtype=ti.f64, shape=())
         self.c[None] = self.micromodulus
 
     @ti.func
-    def compute_force(self, stretch: ti.f32, omega: ti.f32) -> ti.f32:
+    def compute_force(self, stretch: ti.f64, omega: ti.f64) -> ti.f64:
         """Compute pairwise force magnitude in kernel.
 
         Args:

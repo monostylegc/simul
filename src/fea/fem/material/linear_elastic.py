@@ -53,8 +53,8 @@ class LinearElastic(MaterialBase):
             self.lam = youngs_modulus * poisson_ratio / ((1 + poisson_ratio) * (1 - 2*poisson_ratio))
 
         # Store as Taichi fields for kernel access
-        self._mu = ti.field(dtype=ti.f32, shape=())
-        self._lam = ti.field(dtype=ti.f32, shape=())
+        self._mu = ti.field(dtype=ti.f64, shape=())
+        self._lam = ti.field(dtype=ti.f64, shape=())
         self._mu[None] = self.mu
         self._lam[None] = self.lam
 
@@ -110,7 +110,7 @@ class LinearElastic(MaterialBase):
         for gp in range(n_gauss):
             # Small strain: ε = 0.5*(F + Fᵀ) - I
             Fg = F[gp]
-            I = ti.Matrix.identity(ti.f32, dim)
+            I = ti.Matrix.identity(ti.f64, dim)
             eps = 0.5 * (Fg + Fg.transpose()) - I
             tr_eps = eps.trace()
 
@@ -160,7 +160,7 @@ class LinearElastic(MaterialBase):
 
                 for a in range(nodes_per_elem):
                     node = elements[e][a]
-                    f_a = ti.Vector.zero(ti.f32, dim)
+                    f_a = ti.Vector.zero(ti.f64, dim)
                     for i in ti.static(range(dim)):
                         for j in ti.static(range(dim)):
                             f_a[i] -= sigma[i, j] * dN[a, j] * vol

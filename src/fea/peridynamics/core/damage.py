@@ -96,7 +96,7 @@ class DamageModel:
         self,
         particles: ti.template(),
         bonds: ti.template(),
-        critical_stretch: ti.f32
+        critical_stretch: ti.f64
     ):
         """Update bond damage state based on critical stretch criterion.
 
@@ -137,7 +137,7 @@ class DamageModel:
                 for k in range(bonds.n_neighbors[i]):
                     if bonds.broken[i, k] == 1:
                         broken_count += 1
-                particles.damage[i] = ti.cast(broken_count, ti.f32) / ti.cast(initial, ti.f32)
+                particles.damage[i] = ti.cast(broken_count, ti.f64) / ti.cast(initial, ti.f64)
             else:
                 particles.damage[i] = 0.0
 

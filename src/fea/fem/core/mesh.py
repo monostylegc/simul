@@ -27,7 +27,7 @@ class FEMesh:
         n_nodes: int,
         n_elements: int,
         element_type: ElementType,
-        dtype: ti.types.primitive_types = ti.f32
+        dtype: ti.types.primitive_types = ti.f64
     ):
         """Initialize mesh data structure.
 
@@ -103,8 +103,8 @@ class FEMesh:
         assert elements.shape[1] == self.nodes_per_elem
 
         # Copy to fields
-        self.X.from_numpy(nodes.astype(np.float32))
-        self.x.from_numpy(nodes.astype(np.float32))
+        self.X.from_numpy(nodes.astype(np.float64))
+        self.x.from_numpy(nodes.astype(np.float64))
         self.elements.from_numpy(elements.astype(np.int32))
 
         if material_ids is not None:
@@ -150,71 +150,71 @@ class FEMesh:
             self.elem_vol[e] = vol
 
     @ti.func
-    def _get_gauss_point_values(self, g: int) -> ti.types.vector(4, ti.f32):
+    def _get_gauss_point_values(self, g: int) -> ti.types.vector(4, ti.f64):
         """Get Gauss point coordinates and weight.
 
         Returns:
             Vector of (xi, eta, zeta, weight)
         """
-        result = ti.Vector([0.0, 0.0, 0.0, 1.0], dt=ti.f32)
+        result = ti.Vector([0.0, 0.0, 0.0, 1.0], dt=ti.f64)
 
         if ti.static(self.element_type == ElementType.TET4):
             # 1-point rule for TET4
-            result = ti.Vector([0.25, 0.25, 0.25, 1.0 / 6.0], dt=ti.f32)
+            result = ti.Vector([0.25, 0.25, 0.25, 1.0 / 6.0], dt=ti.f64)
         elif ti.static(self.element_type == ElementType.TET10):
             # 4-point rule for TET10
             a = 0.5854101966249685
             b = 0.1381966011250105
             w = 0.25 / 6.0
             if g == 0:
-                result = ti.Vector([a, b, b, w], dt=ti.f32)
+                result = ti.Vector([a, b, b, w], dt=ti.f64)
             elif g == 1:
-                result = ti.Vector([b, a, b, w], dt=ti.f32)
+                result = ti.Vector([b, a, b, w], dt=ti.f64)
             elif g == 2:
-                result = ti.Vector([b, b, a, w], dt=ti.f32)
+                result = ti.Vector([b, b, a, w], dt=ti.f64)
             else:
-                result = ti.Vector([b, b, b, w], dt=ti.f32)
+                result = ti.Vector([b, b, b, w], dt=ti.f64)
         elif ti.static(self.element_type == ElementType.TRI3 or
                        self.element_type == ElementType.TRI3_PE):
             # 1-point rule for TRI3
-            result = ti.Vector([1.0/3.0, 1.0/3.0, 0.0, 0.5], dt=ti.f32)
+            result = ti.Vector([1.0/3.0, 1.0/3.0, 0.0, 0.5], dt=ti.f64)
         elif ti.static(self.element_type == ElementType.HEX8):
             # 2x2x2 Gauss rule for HEX8 (8점)
             gp = 0.5773502691896257  # 1/sqrt(3)
             # 각 점의 가중치는 1.0
             if g == 0:
-                result = ti.Vector([-gp, -gp, -gp, 1.0], dt=ti.f32)
+                result = ti.Vector([-gp, -gp, -gp, 1.0], dt=ti.f64)
             elif g == 1:
-                result = ti.Vector([+gp, -gp, -gp, 1.0], dt=ti.f32)
+                result = ti.Vector([+gp, -gp, -gp, 1.0], dt=ti.f64)
             elif g == 2:
-                result = ti.Vector([+gp, +gp, -gp, 1.0], dt=ti.f32)
+                result = ti.Vector([+gp, +gp, -gp, 1.0], dt=ti.f64)
             elif g == 3:
-                result = ti.Vector([-gp, +gp, -gp, 1.0], dt=ti.f32)
+                result = ti.Vector([-gp, +gp, -gp, 1.0], dt=ti.f64)
             elif g == 4:
-                result = ti.Vector([-gp, -gp, +gp, 1.0], dt=ti.f32)
+                result = ti.Vector([-gp, -gp, +gp, 1.0], dt=ti.f64)
             elif g == 5:
-                result = ti.Vector([+gp, -gp, +gp, 1.0], dt=ti.f32)
+                result = ti.Vector([+gp, -gp, +gp, 1.0], dt=ti.f64)
             elif g == 6:
-                result = ti.Vector([+gp, +gp, +gp, 1.0], dt=ti.f32)
+                result = ti.Vector([+gp, +gp, +gp, 1.0], dt=ti.f64)
             else:
-                result = ti.Vector([-gp, +gp, +gp, 1.0], dt=ti.f32)
+                result = ti.Vector([-gp, +gp, +gp, 1.0], dt=ti.f64)
         elif ti.static(self.element_type == ElementType.QUAD4 or
                        self.element_type == ElementType.QUAD4_PE):
             # 2x2 Gauss rule for QUAD4 (4점)
             gp = 0.5773502691896257  # 1/sqrt(3)
             if g == 0:
-                result = ti.Vector([-gp, -gp, 0.0, 1.0], dt=ti.f32)
+                result = ti.Vector([-gp, -gp, 0.0, 1.0], dt=ti.f64)
             elif g == 1:
-                result = ti.Vector([+gp, -gp, 0.0, 1.0], dt=ti.f32)
+                result = ti.Vector([+gp, -gp, 0.0, 1.0], dt=ti.f64)
             elif g == 2:
-                result = ti.Vector([+gp, +gp, 0.0, 1.0], dt=ti.f32)
+                result = ti.Vector([+gp, +gp, 0.0, 1.0], dt=ti.f64)
             else:
-                result = ti.Vector([-gp, +gp, 0.0, 1.0], dt=ti.f32)
+                result = ti.Vector([-gp, +gp, 0.0, 1.0], dt=ti.f64)
 
         return result
 
     @ti.func
-    def _get_shape_derivatives(self, xi: ti.f32, eta: ti.f32, zeta: ti.f32):
+    def _get_shape_derivatives(self, xi: ti.f64, eta: ti.f64, zeta: ti.f64):
         """Get shape function derivatives in natural coordinates.
 
         Returns:
@@ -243,9 +243,9 @@ class FEMesh:
             # dN_i/dζ = (1/8) * (1 + ξ_i·ξ) * (1 + η_i·η) * ζ_i
             # 노드 좌표: 0:(-1,-1,-1), 1:(+1,-1,-1), 2:(+1,+1,-1), 3:(-1,+1,-1)
             #           4:(-1,-1,+1), 5:(+1,-1,+1), 6:(+1,+1,+1), 7:(-1,+1,+1)
-            xi_n = ti.Vector([-1.0, 1.0, 1.0, -1.0, -1.0, 1.0, 1.0, -1.0], dt=ti.f32)
-            eta_n = ti.Vector([-1.0, -1.0, 1.0, 1.0, -1.0, -1.0, 1.0, 1.0], dt=ti.f32)
-            zeta_n = ti.Vector([-1.0, -1.0, -1.0, -1.0, 1.0, 1.0, 1.0, 1.0], dt=ti.f32)
+            xi_n = ti.Vector([-1.0, 1.0, 1.0, -1.0, -1.0, 1.0, 1.0, -1.0], dt=ti.f64)
+            eta_n = ti.Vector([-1.0, -1.0, 1.0, 1.0, -1.0, -1.0, 1.0, 1.0], dt=ti.f64)
+            zeta_n = ti.Vector([-1.0, -1.0, -1.0, -1.0, 1.0, 1.0, 1.0, 1.0], dt=ti.f64)
 
             for i in ti.static(range(8)):
                 xi_i = xi_n[i]
@@ -262,8 +262,8 @@ class FEMesh:
             # dN_i/dξ = (1/4) * ξ_i * (1 + η_i·η)
             # dN_i/dη = (1/4) * (1 + ξ_i·ξ) * η_i
             # 노드 좌표: 0:(-1,-1), 1:(+1,-1), 2:(+1,+1), 3:(-1,+1)
-            xi_n = ti.Vector([-1.0, 1.0, 1.0, -1.0], dt=ti.f32)
-            eta_n = ti.Vector([-1.0, -1.0, 1.0, 1.0], dt=ti.f32)
+            xi_n = ti.Vector([-1.0, 1.0, 1.0, -1.0], dt=ti.f64)
+            eta_n = ti.Vector([-1.0, -1.0, 1.0, 1.0], dt=ti.f64)
 
             for i in ti.static(range(4)):
                 xi_i = xi_n[i]
@@ -275,7 +275,7 @@ class FEMesh:
         return dN
 
     @ti.func
-    def _compute_jacobian(self, e: int, xi: ti.f32, eta: ti.f32, zeta: ti.f32):
+    def _compute_jacobian(self, e: int, xi: ti.f64, eta: ti.f64, zeta: ti.f64):
         """Compute Jacobian matrix J = dX/d(xi,eta,zeta)."""
         J = ti.Matrix.zero(self.dtype, self.dim, self.dim)
         dNdxi = self._get_shape_derivatives(xi, eta, zeta)
@@ -335,7 +335,7 @@ class FEMesh:
         fixed[node_ids] = 1
         self.fixed.from_numpy(fixed)
 
-        fixed_vals = np.zeros((self.n_nodes, self.dim), dtype=np.float32)
+        fixed_vals = np.zeros((self.n_nodes, self.dim), dtype=np.float64)
         if values is not None:
             fixed_vals[node_ids] = values
         self.fixed_value.from_numpy(fixed_vals)
@@ -347,7 +347,7 @@ class FEMesh:
             node_ids: Node indices
             forces: Force vectors (n_nodes, dim)
         """
-        f_ext = np.zeros((self.n_nodes, self.dim), dtype=np.float32)
+        f_ext = np.zeros((self.n_nodes, self.dim), dtype=np.float64)
         f_ext[node_ids] = forces
         self.f_ext.from_numpy(f_ext)
 

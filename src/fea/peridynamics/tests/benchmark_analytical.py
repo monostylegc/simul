@@ -144,7 +144,7 @@ def benchmark_bond_tension_2d():
     for i in range(n):
         if not left_mask[i]:
             x[i, 0] = X[i, 0] + strain * X[i, 0]
-    ps.x.from_numpy(x.astype(np.float32))
+    ps.x.from_numpy(x.astype(np.float64))
 
     # 준정적 솔버로 평형 탐색
     solver = QuasiStaticSolver(ps, bonds, micromodulus=c, damping=0.1)
@@ -210,7 +210,7 @@ def benchmark_nosb_tension_2d():
     for i in range(n):
         if not left_mask[i]:
             x[i, 0] = X[i, 0] + strain * X[i, 0]
-    ps.x.from_numpy(x.astype(np.float32))
+    ps.x.from_numpy(x.astype(np.float64))
 
     # NOSB 계산: F → σ → f
     t0 = time.time()
@@ -289,7 +289,7 @@ def benchmark_nosb_compression_3d():
     for i in range(n):
         if not bottom_mask[i]:
             x[i, 2] = X[i, 2] - strain * X[i, 2]
-    ps.x.from_numpy(x.astype(np.float32))
+    ps.x.from_numpy(x.astype(np.float64))
 
     t0 = time.time()
     nosb.compute_deformation_gradient()
@@ -365,7 +365,7 @@ def benchmark_energy_conservation():
             amp = 0.1 * np.exp(-r2 / (L * 0.1)**2)
             v[i, 0] = amp
             v[i, 1] = amp * 0.5
-    ps.v.from_numpy(v.astype(np.float32))
+    ps.v.from_numpy(v.astype(np.float64))
 
     # 5 스텝 워밍업 (초기 전이 통과)
     for _ in range(5):
@@ -465,7 +465,7 @@ def benchmark_convergence_nosb():
         for i in range(n):
             if not left_mask[i]:
                 x[i, 0] = X[i, 0] + strain * X[i, 0]
-        ps.x.from_numpy(x.astype(np.float32))
+        ps.x.from_numpy(x.astype(np.float64))
 
         t0 = time.time()
         nosb.compute_deformation_gradient()
@@ -519,7 +519,7 @@ def benchmark_convergence_nosb():
 # ============================================================
 
 def main():
-    ti.init(arch=ti.cpu, default_fp=ti.f32)
+    ti.init(arch=ti.cpu, default_fp=ti.f64)
 
     print("\n################################################################")
     print("  Peridynamics 솔버 해석해 비교 벤치마크")

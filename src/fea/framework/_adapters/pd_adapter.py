@@ -114,7 +114,7 @@ class PDAdapter(AdapterBase):
         self._options = options
 
         # 접촉력 버퍼 (numpy, 매 스텝 ps.f에 추가)
-        self._contact_forces = np.zeros((n_particles, dim), dtype=np.float32)
+        self._contact_forces = np.zeros((n_particles, dim), dtype=np.float64)
 
     def _apply_forces(self):
         """외력 + 접촉력 콜백."""
@@ -174,7 +174,7 @@ class PDAdapter(AdapterBase):
     def inject_contact_forces(self, indices: np.ndarray, forces: np.ndarray):
         """접촉력 주입 (ps.f에 추가)."""
         for i, idx in enumerate(indices):
-            self._contact_forces[idx] += forces[i].astype(np.float32)
+            self._contact_forces[idx] += forces[i].astype(np.float64)
 
     def clear_contact_forces(self):
         """접촉력 초기화."""

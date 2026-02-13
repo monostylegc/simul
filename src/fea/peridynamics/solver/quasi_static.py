@@ -50,7 +50,7 @@ class QuasiStaticSolver:
         self.damping = damping
 
         # Store micromodulus
-        self.c = ti.field(dtype=ti.f32, shape=())
+        self.c = ti.field(dtype=ti.f64, shape=())
         self.c[None] = micromodulus
 
         # Compute stable time step if not provided
@@ -113,15 +113,15 @@ class QuasiStaticSolver:
     def _init_acceleration(self):
         """가속도를 0으로 초기화."""
         for i in range(self.n_particles):
-            self.particles.a[i] = ti.Vector.zero(ti.f32, self.dim)
-            self.particles.v[i] = ti.Vector.zero(ti.f32, self.dim)
+            self.particles.a[i] = ti.Vector.zero(ti.f64, self.dim)
+            self.particles.v[i] = ti.Vector.zero(ti.f64, self.dim)
 
     @ti.kernel
     def _compute_bond_forces(self):
         """Compute internal forces from bonds."""
         # Reset forces
         for i in range(self.n_particles):
-            self.particles.f[i] = ti.Vector.zero(ti.f32, self.dim)
+            self.particles.f[i] = ti.Vector.zero(ti.f64, self.dim)
 
         # Compute bond forces
         for i in range(self.n_particles):
@@ -143,7 +143,7 @@ class QuasiStaticSolver:
                         self.particles.f[i] += f_vec
 
     @ti.kernel
-    def _velocity_verlet_step1(self, dt: ti.f32):
+    def _velocity_verlet_step1(self, dt: ti.f64):
         """Velocity Verlet step 1: update positions."""
         for i in range(self.n_particles):
             if self.particles.fixed[i] == 0:
@@ -160,7 +160,7 @@ class QuasiStaticSolver:
                     self.particles.x[i] += dx
 
     @ti.kernel
-    def _velocity_verlet_step2(self, dt: ti.f32, damping: ti.f32) -> ti.f32:
+    def _velocity_verlet_step2(self, dt: ti.f64, damping: ti.f64) -> ti.f64:
         """Velocity Verlet step 2: update velocities with damping. Returns kinetic energy."""
         ke = 0.0
         for i in range(self.n_particles):
@@ -193,8 +193,8 @@ class QuasiStaticSolver:
                 v_sq = self.particles.v[i].dot(self.particles.v[i])
                 ke += 0.5 * self.particles.mass[i] * v_sq
             else:
-                self.particles.v[i] = ti.Vector.zero(ti.f32, self.dim)
-                self.particles.a[i] = ti.Vector.zero(ti.f32, self.dim)
+                self.particles.v[i] = ti.Vector.zero(ti.f64, self.dim)
+                self.particles.a[i] = ti.Vector.zero(ti.f64, self.dim)
 
         return ke
 
@@ -202,10 +202,10 @@ class QuasiStaticSolver:
     def _reset_velocities(self):
         """Reset all velocities to zero."""
         for i in range(self.n_particles):
-            self.particles.v[i] = ti.Vector.zero(ti.f32, self.dim)
+            self.particles.v[i] = ti.Vector.zero(ti.f64, self.dim)
 
     @ti.kernel
-    def _compute_residual_norm(self) -> ti.f32:
+    def _compute_residual_norm(self) -> ti.f64:
         """Compute L2 norm of residual forces on free particles."""
         norm_sq = 0.0
         for i in range(self.n_particles):
@@ -215,7 +215,7 @@ class QuasiStaticSolver:
         return ti.sqrt(norm_sq)
 
     @ti.kernel
-    def _compute_load_norm(self, load_mask: ti.template()) -> ti.f32:
+    def _compute_load_norm(self, load_mask: ti.template()) -> ti.f64:
         """Compute norm of applied loads."""
         norm_sq = 0.0
         for i in range(self.n_particles):
@@ -362,7 +362,7 @@ class LoadControl:
         self.load_mask.from_numpy(mask)
 
         # Current load vector per particle
-        self.load = ti.Vector.field(particles.dim, dtype=ti.f32, shape=())
+        self.load = ti.Vector.field(particles.dim, dtype=ti.f64, shape=())
 
     def set_load(self, force_per_particle: tuple):
         """Set the load vector per particle."""

@@ -11,7 +11,7 @@ import taichi as ti
 @pytest.fixture(scope="module", autouse=True)
 def init_taichi():
     """모듈당 한 번 Taichi 초기화."""
-    ti.init(arch=ti.cpu, default_fp=ti.f32)
+    ti.init(arch=ti.cpu, default_fp=ti.f64)
 
 
 class Test3DGridInitialization:
@@ -374,7 +374,7 @@ class Test3DQuasiStaticCompression:
 
         x = ps.x.to_numpy()
         x[top_indices, 2] += compression
-        ps.x.from_numpy(x.astype(np.float32))
+        ps.x.from_numpy(x.astype(np.float64))
 
         # 변위 확인 - 솔버 없이 직접 변위 확인
         disp = ps.get_displacements()
@@ -430,7 +430,7 @@ class Test3DQuasiStaticCompression:
         # 작은 교란
         x = ps.x.to_numpy()
         x[4:, 2] += 0.0001
-        ps.x.from_numpy(x.astype(np.float32))
+        ps.x.from_numpy(x.astype(np.float64))
 
         # 여러 스텝 후 발산하지 않음
         for _ in range(50):

@@ -43,13 +43,13 @@ class BondSystem:
         self.neighbors = ti.field(dtype=ti.i32, shape=(n_particles, max_bonds))
         self.n_neighbors = ti.field(dtype=ti.i32, shape=n_particles)
 
-        # Reference bond vectors
-        self.xi = ti.Vector.field(dim, dtype=ti.f32, shape=(n_particles, max_bonds))
-        self.xi_length = ti.field(dtype=ti.f32, shape=(n_particles, max_bonds))
+        # Reference bond vectors (f64 정밀도)
+        self.xi = ti.Vector.field(dim, dtype=ti.f64, shape=(n_particles, max_bonds))
+        self.xi_length = ti.field(dtype=ti.f64, shape=(n_particles, max_bonds))
 
         # Bond state
         self.broken = ti.field(dtype=ti.i32, shape=(n_particles, max_bonds))
-        self.omega = ti.field(dtype=ti.f32, shape=(n_particles, max_bonds))
+        self.omega = ti.field(dtype=ti.f64, shape=(n_particles, max_bonds))
 
         # Total initial bonds per particle (for damage calculation)
         self.initial_bonds = ti.field(dtype=ti.i32, shape=n_particles)
@@ -89,7 +89,7 @@ class BondSystem:
                 self.broken[i, k] = 0  # All bonds initially intact
 
     @ti.kernel
-    def _compute_bond_data(self, X: ti.template(), horizon: ti.f32):
+    def _compute_bond_data(self, X: ti.template(), horizon: ti.f64):
         """Compute reference bond vectors and influence weights.
 
         Uses standard influence function: omega = 1 - |xi|/delta
@@ -134,7 +134,7 @@ class BondSystem:
         return x[j] - x[i]
 
     @ti.func
-    def get_stretch(self, x: ti.template(), i: ti.i32, k: ti.i32) -> ti.f32:
+    def get_stretch(self, x: ti.template(), i: ti.i32, k: ti.i32) -> ti.f64:
         """Compute bond stretch s = (|eta| - |xi|) / |xi|.
 
         Args:

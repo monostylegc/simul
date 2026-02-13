@@ -185,21 +185,33 @@ class SPGCompute:
         """대칭 본드 기반 안정화력 (zero-energy mode 제어).
 
         본드 신장 기반 대칭 안정화:
-        f_stab = G_s · c · s · ω · (η/|η|) · V_j
+        f_stab = G_s · support_ratio · c · s · ω · (η/|η|) · V_j
 
         여기서:
           s = (|η| - |ξ|) / |ξ|  (본드 신장)
           ω = 영향 함수 가중치
           η = x_j - x_i  (현재 본드 벡터)
+          support_ratio = n_neighbors[i] / max_neighbors (경계 입자 감소)
 
-        이 공식은 뉴턴 제3법칙을 만족하여 대칭 강성 행렬을 보장한다.
+        경계 입자는 이웃 수가 적으므로 support_ratio로 안정화를 줄여
+        과도한 경계 오차를 방지한다.
         """
         G_s = self.G_s[None]
         c = self.c_bond[None]
 
+        # 전체 입자의 최대 이웃 수 산출
+        max_nbr = 1
+        for i in range(self.n_particles):
+            n = self.kernel.n_neighbors[i]
+            if n > max_nbr:
+                max_nbr = n
+
         if c > 0.0:
             for i in range(self.n_particles):
                 n_nbr = self.kernel.n_neighbors[i]
+                # 경계 입자 감지: 이웃 수 비율로 안정화 스케일링
+                support_ratio = ti.cast(n_nbr, ti.f64) / ti.cast(max_nbr, ti.f64)
+
                 for k in range(n_nbr):
                     if self.bonds.broken[i, k] == 0:
                         j = self.kernel.neighbors[i, k]
@@ -214,9 +226,8 @@ class SPGCompute:
                             # 영향 함수: ω = max(0, 1 - |ξ|/h)
                             h = self.kernel.h[None]
                             omega = ti.max(0.0, 1.0 - xi_len / h)
-                            # 부호 반전: f_int 규약에서 안정화력은
-                            # 변형에 저항(복원)해야 하므로 음의 부호
-                            f_stab = G_s * c * stretch * omega * (eta / eta_len) * V_j
+                            # 경계 입자는 support_ratio만큼 안정화 감소
+                            f_stab = G_s * support_ratio * c * stretch * omega * (eta / eta_len) * V_j
 
                             for d in ti.static(range(self.dim)):
                                 ti.atomic_sub(self.particles.f_int[i][d], f_stab[d])
