@@ -48,7 +48,7 @@ def run_segmentation(
     if request.engine == "spine_unified" and request.modality:
         seg_kwargs["modality"] = request.modality
 
-    engine.run(**seg_kwargs)
+    engine.segment(**seg_kwargs)
 
     # 3. 표준 라벨로 변환
     if progress_callback:
