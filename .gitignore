@@ -10,3 +10,14 @@ wheels/
 .venv
 
 node_modules
+
+# 학습 데이터/모델 (대용량)
+data/
+*.nii.gz
+*.nii
+*.nrrd
+*.onnx
+*.pth
+
+# E2E 테스트 임시
+test-e2e-workflow.mjs
