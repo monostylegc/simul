@@ -255,6 +255,95 @@
                     <button class="tool-btn" id="btn-load-nrrd" style="background: #757575;">Load NRRD...</button>
                     <button class="tool-btn" id="btn-clear-all" style="background: #e53935;">Clear All</button>
                 </div>
+                <!-- DICOM 원클릭 파이프라인 -->
+                <div class="prop-section" style="border-left: 3px solid #7c4dff;">
+                    <div class="prop-section-title" style="color: #7c4dff;">DICOM 원클릭</div>
+                    <button class="tool-btn" id="btn-dicom-pipeline" style="background: #7c4dff; font-weight: bold;">
+                        DICOM 폴더 선택 → 자동 처리
+                    </button>
+                    <div style="font-size: 10px; color: #888; margin-top: 4px;">
+                        폴더 선택 → 변환 → 세그멘테이션 → 3D 모델 (원클릭)
+                    </div>
+                    <!-- 파이프라인 옵션 -->
+                    <div style="margin-top: 6px;">
+                        <label style="font-size: 11px; color: #666;">엔진:</label>
+                        <select id="dicom-engine" class="prop-select" style="margin-top: 2px;">
+                            <option value="totalseg">TotalSegmentator (CT)</option>
+                            <option value="totalspineseg">TotalSpineSeg (MRI)</option>
+                            <option value="spine_unified">SpineUnified (CT+MRI)</option>
+                        </select>
+                    </div>
+                    <div style="display: flex; gap: 4px; margin-top: 4px;">
+                        <label style="display: flex; align-items: center; font-size: 11px; cursor: pointer;">
+                            <input type="checkbox" id="dicom-fast" style="margin-right: 4px;"> Fast
+                        </label>
+                        <label style="display: flex; align-items: center; font-size: 11px; cursor: pointer;">
+                            <input type="checkbox" id="dicom-smooth" checked style="margin-right: 4px;"> Smooth
+                        </label>
+                    </div>
+                    <!-- 파이프라인 진행률 -->
+                    <div id="dicom-pipeline-progress" style="display: none; margin-top: 6px; padding: 8px; background: #ede7f6; border-radius: 4px;">
+                        <div style="font-size: 11px; color: #4a148c; font-weight: bold; margin-bottom: 4px;" id="dicom-pipeline-title">처리 중...</div>
+                        <div style="display: flex; flex-direction: column; gap: 3px;">
+                            <div class="pipeline-step-row" id="ps-upload" style="font-size: 10px; color: #888;">
+                                <span class="ps-icon">○</span> 업로드
+                            </div>
+                            <div class="pipeline-step-row" id="ps-convert" style="font-size: 10px; color: #888;">
+                                <span class="ps-icon">○</span> DICOM → NIfTI 변환
+                            </div>
+                            <div class="pipeline-step-row" id="ps-segment" style="font-size: 10px; color: #888;">
+                                <span class="ps-icon">○</span> 세그멘테이션
+                            </div>
+                            <div class="pipeline-step-row" id="ps-mesh" style="font-size: 10px; color: #888;">
+                                <span class="ps-icon">○</span> 3D 모델 생성
+                            </div>
+                        </div>
+                        <div style="font-size: 10px; color: #666; margin-top: 4px;" id="dicom-pipeline-detail"></div>
+                    </div>
+                </div>
+                <!-- CT/MRI 업로드 + 세그멘테이션 (수동) -->
+                <div class="prop-section" style="border-left: 3px solid #9c27b0;">
+                    <div class="prop-section-title" style="color: #9c27b0;">CT/MRI Pipeline (수동)</div>
+                    <button class="tool-btn" id="btn-upload-nifti" style="background: #9c27b0;">Upload NIfTI (CT/MRI)...</button>
+                    <div id="upload-status" style="display: none; font-size: 11px; color: #666; margin-top: 4px;">
+                        <span id="upload-filename"></span> (<span id="upload-size"></span>)
+                    </div>
+                    <div style="margin-top: 6px;">
+                        <label style="font-size: 11px; color: #666;">엔진:</label>
+                        <select id="seg-engine" class="prop-select" style="margin-top: 2px;">
+                            <option value="totalseg">TotalSegmentator (CT)</option>
+                            <option value="totalspineseg">TotalSpineSeg (MRI)</option>
+                            <option value="spine_unified">SpineUnified (CT+MRI)</option>
+                        </select>
+                    </div>
+                    <!-- 모달리티 선택 (SpineUnified 전용) -->
+                    <div id="modality-section" style="display: none; margin-top: 4px;">
+                        <label style="font-size: 11px; color: #666;">모달리티:</label>
+                        <select id="seg-modality" class="prop-select" style="margin-top: 2px;">
+                            <option value="auto">자동 감지</option>
+                            <option value="CT">CT</option>
+                            <option value="MRI">MRI</option>
+                        </select>
+                    </div>
+                    <div style="display: flex; gap: 4px; margin-top: 4px;">
+                        <label style="display: flex; align-items: center; font-size: 11px; cursor: pointer;">
+                            <input type="checkbox" id="seg-fast" style="margin-right: 4px;"> Fast 모드
+                        </label>
+                    </div>
+                    <button class="tool-btn" id="btn-run-segment" style="background: #7b1fa2; margin-top: 6px;" disabled>
+                        세그멘테이션 실행
+                    </button>
+                    <button class="tool-btn" id="btn-extract-meshes" style="background: #4a148c; margin-top: 4px;" disabled>
+                        3D 모델 생성
+                    </button>
+                    <!-- 세그멘테이션 진행률 -->
+                    <div id="seg-progress" style="display: none; margin-top: 6px; padding: 6px; background: #f3e5f5; border-radius: 4px;">
+                        <div style="font-size: 11px; color: #6a1b9a;" id="seg-progress-text">대기 중...</div>
+                    </div>
+                    <!-- 라벨 목록 -->
+                    <div id="seg-labels" style="display: none; margin-top: 6px; max-height: 120px; overflow-y: auto; font-size: 11px; color: #444;">
+                    </div>
+                </div>
                 <!-- 좌표 설정 -->
                 <div class="prop-section">
                     <div class="prop-section-title">좌표 설정</div>
@@ -299,6 +388,31 @@
             <!-- ====== Modeling 패널 ====== -->
             <div class="prop-panel" id="panel-modeling" style="display:none;">
                 <h3>Modeling</h3>
+                <!-- 임플란트 관리 -->
+                <div class="prop-section" style="border-left: 3px solid #ff9800;">
+                    <div class="prop-section-title" style="color: #ff9800;">Implant</div>
+                    <button class="tool-btn" id="btn-import-implant" style="background: #ff9800;">Import Implant STL...</button>
+                    <div style="margin-top: 4px;">
+                        <label style="font-size: 11px; color: #666;">재료:</label>
+                        <select id="implant-material" class="prop-select" style="margin-top: 2px;">
+                            <option value="titanium">Titanium (Ti-6Al-4V)</option>
+                            <option value="peek">PEEK</option>
+                            <option value="cobalt_chrome">CoCr</option>
+                            <option value="stainless_steel">Stainless Steel</option>
+                        </select>
+                    </div>
+                    <div id="implant-list" style="margin-top: 6px; max-height: 100px; overflow-y: auto; font-size: 11px;"></div>
+                    <div style="display: flex; gap: 4px; margin-top: 6px;">
+                        <button class="tool-btn" id="btn-impl-translate" style="flex:1; font-size: 10px; padding: 5px;" title="이동">Move</button>
+                        <button class="tool-btn" id="btn-impl-rotate" style="flex:1; font-size: 10px; padding: 5px;" title="회전">Rotate</button>
+                        <button class="tool-btn" id="btn-impl-scale" style="flex:1; font-size: 10px; padding: 5px;" title="스케일">Scale</button>
+                    </div>
+                    <!-- 수술 계획 저장/로드 -->
+                    <div style="display: flex; gap: 4px; margin-top: 6px;">
+                        <button class="tool-btn" id="btn-save-plan" style="flex: 1; background: #757575; font-size: 10px; padding: 5px;">계획 저장</button>
+                        <button class="tool-btn" id="btn-load-plan" style="flex: 1; background: #757575; font-size: 10px; padding: 5px;">계획 로드</button>
+                    </div>
+                </div>
                 <!-- 드릴 토글 -->
                 <div class="prop-section">
                     <button class="tool-btn" id="btn-toggle-drill">Drill: ON</button>
@@ -395,6 +509,7 @@
                 <!-- Step 3: 재료 설정 -->
                 <div class="prop-section" style="border-left: 3px solid #1976d2;">
                     <div class="prop-section-title">Step 3: 재료 설정</div>
+                    <button class="tool-btn" id="btn-auto-material" style="background: #1565c0; margin-bottom: 6px;">자동 재료 할당 (SpineLabel)</button>
                     <div class="slider-container">
                         <label>대상</label>
                         <select id="material-target" class="prop-select">
@@ -405,10 +520,30 @@
                         <label>프리셋</label>
                         <select id="material-preset" class="prop-select">
                             <option value="bone">Bone (15 GPa)</option>
+                            <option value="cancellous_bone">Cancellous Bone (1 GPa)</option>
                             <option value="disc">Disc (10 MPa)</option>
-                            <option value="ligament">Ligament (50 MPa)</option>
+                            <option value="soft_tissue">Soft Tissue (1 MPa)</option>
                             <option value="titanium">Titanium (110 GPa)</option>
+                            <option value="peek">PEEK (4 GPa)</option>
+                            <option value="cobalt_chrome">CoCr (230 GPa)</option>
+                            <option value="stainless_steel">SS 316L (200 GPa)</option>
+                            <option value="custom">Custom...</option>
                         </select>
+                    </div>
+                    <!-- 수동 재료 편집 (Custom 선택 시 또는 항상 표시) -->
+                    <div id="material-custom-section" style="margin-top: 6px; padding: 6px; background: #e3f2fd; border-radius: 4px;">
+                        <div class="slider-container">
+                            <label>Young's Modulus E (Pa)</label>
+                            <input type="number" id="mat-E" value="15000000000" step="1e8" style="width: 100%; padding: 4px; font-size: 11px; border: 1px solid #bbb; border-radius: 3px;">
+                        </div>
+                        <div class="slider-container">
+                            <label>Poisson Ratio ν</label>
+                            <input type="number" id="mat-nu" value="0.3" step="0.01" min="0" max="0.5" style="width: 100%; padding: 4px; font-size: 11px; border: 1px solid #bbb; border-radius: 3px;">
+                        </div>
+                        <div class="slider-container">
+                            <label>Density ρ (kg/m³)</label>
+                            <input type="number" id="mat-density" value="1850" step="10" style="width: 100%; padding: 4px; font-size: 11px; border: 1px solid #bbb; border-radius: 3px;">
+                        </div>
                     </div>
                     <button class="tool-btn" id="btn-assign-material" style="margin-top: 4px;">재료 적용</button>
                 </div>
@@ -432,6 +567,17 @@
                         <option value="pd">PD (Peridynamics)</option>
                         <option value="spg">SPG (메쉬프리)</option>
                     </select>
+                </div>
+                <!-- 해석 모드 -->
+                <div class="prop-section">
+                    <div class="prop-section-title">해석 모드</div>
+                    <select id="analysis-mode-select" class="prop-select">
+                        <option value="single">단일 도메인 (빠름)</option>
+                        <option value="multibody">다중 물체 접촉 (정밀)</option>
+                    </select>
+                    <div style="font-size: 10px; color: #888; margin-top: 4px;">
+                        다중 물체: 임플란트+뼈 접촉 해석
+                    </div>
                 </div>
                 <!-- 해석 실행 -->
                 <button class="tool-btn" id="btn-run-analysis" style="background: #27ae60; font-weight: bold; padding: 10px;">
@@ -473,6 +619,17 @@
                 <div id="analysis-colorbar" style="margin-top: 8px;"></div>
                 <!-- 통계 -->
                 <div id="analysis-stats" style="margin-top: 8px; font-size: 11px; color: #666;"></div>
+                <!-- 비교 및 필터 -->
+                <div class="prop-section" style="border-left: 3px solid #ff6f00;">
+                    <div class="prop-section-title" style="color: #ff6f00;">비교 / 필터</div>
+                    <button class="tool-btn" id="btn-save-preop" style="background: #ff8f00;">수술 전 결과 저장</button>
+                    <button class="tool-btn" id="btn-compare" style="background: #ff6f00; margin-top: 4px;" disabled>전/후 비교</button>
+                    <div class="slider-container" style="margin-top: 6px;">
+                        <label>임플란트 주변 필터 반경 (mm)</label>
+                        <input type="range" id="filter-radius" min="0" max="50" value="0" step="1">
+                        <div class="slider-value"><span id="filter-radius-value">0</span> mm (0=전체)</div>
+                    </div>
+                </div>
             </div>
 
             <!-- ====== View 패널 ====== -->
@@ -564,21 +721,27 @@
     <!-- 숨김 파일 입력 -->
     <input type="file" id="file-input" accept=".stl,.STL" style="display: none;" multiple>
     <input type="file" id="nrrd-input" accept=".nrrd,.nhdr" style="display: none;">
+    <input type="file" id="nifti-input" accept=".nii,.nii.gz" style="display: none;">
+    <input type="file" id="implant-input" accept=".stl,.STL" style="display: none;">
+    <input type="file" id="plan-input" accept=".json" style="display: none;">
+    <input type="file" id="dicom-input" webkitdirectory directory multiple style="display: none;">
 
     <!-- Three.js -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/TransformControls.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/STLLoader.js"></script>
     <!-- Pako (gzip 디코딩) -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/pako/2.1.0/pako.min.js"></script>
     <!-- Voxel system -->
     <script src="src/nrrd.js"></script>
     <script src="src/voxel.js"></script>
-    <!-- Analysis (Pre/Post Processor + WebSocket) -->
+    <!-- Analysis (Pre/Post Processor + WebSocket + Implant) -->
     <script src="src/colormap.js"></script>
     <script src="src/ws.js"></script>
     <script src="src/pre.js"></script>
     <script src="src/post.js"></script>
+    <script src="src/implant.js"></script>
     <!-- Main App -->
     <script src="src/main.js"></script>
 </body>

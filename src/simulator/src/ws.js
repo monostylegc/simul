@@ -2,10 +2,16 @@
  * WebSocket 클라이언트 — Python 서버와 실시간 통신
  *
  * 프로토콜:
- *   → {"type": "run_analysis", "data": AnalysisRequest}
- *   ← {"type": "progress", "data": {...}}
- *   ← {"type": "result",   "data": {...}}
- *   ← {"type": "error",    "data": {"message": "..."}}
+ *   → {"type": "run_analysis",   "data": AnalysisRequest}
+ *   → {"type": "segment",        "data": SegmentationRequest}
+ *   → {"type": "extract_meshes", "data": MeshExtractRequest}
+ *   → {"type": "auto_material",  "data": AutoMaterialRequest}
+ *   ← {"type": "progress",          "data": {...}}
+ *   ← {"type": "result",            "data": {...}}
+ *   ← {"type": "segment_result",    "data": {...}}
+ *   ← {"type": "meshes_result",     "data": {...}}
+ *   ← {"type": "material_result",   "data": {...}}
+ *   ← {"type": "error",             "data": {"message": "..."}}
  */
 class WSClient {
     constructor(url) {
@@ -25,6 +31,15 @@ class WSClient {
         this._onError = null;
         this._onConnect = null;
         this._onDisconnect = null;
+
+        // 확장 콜백 (세그멘테이션, 메쉬, 재료)
+        this._onSegmentResult = null;
+        this._onMeshesResult = null;
+        this._onMaterialResult = null;
+
+        // DICOM 파이프라인 콜백
+        this._onPipelineStep = null;
+        this._onPipelineResult = null;
 
         // 자동 재연결
         this._reconnectTimer = null;
@@ -93,6 +108,11 @@ class WSClient {
     onError(cb)    { this._onError = cb; }
     onConnect(cb)  { this._onConnect = cb; }
     onDisconnect(cb) { this._onDisconnect = cb; }
+    onSegmentResult(cb)  { this._onSegmentResult = cb; }
+    onMeshesResult(cb)   { this._onMeshesResult = cb; }
+    onMaterialResult(cb) { this._onMaterialResult = cb; }
+    onPipelineStep(cb)   { this._onPipelineStep = cb; }
+    onPipelineResult(cb) { this._onPipelineResult = cb; }
 
     /**
      * 연결 해제
@@ -119,6 +139,21 @@ class WSClient {
                 break;
             case 'result':
                 if (this._onResult) this._onResult(msg.data);
+                break;
+            case 'segment_result':
+                if (this._onSegmentResult) this._onSegmentResult(msg.data);
+                break;
+            case 'meshes_result':
+                if (this._onMeshesResult) this._onMeshesResult(msg.data);
+                break;
+            case 'material_result':
+                if (this._onMaterialResult) this._onMaterialResult(msg.data);
+                break;
+            case 'pipeline_step':
+                if (this._onPipelineStep) this._onPipelineStep(msg.data);
+                break;
+            case 'pipeline_result':
+                if (this._onPipelineResult) this._onPipelineResult(msg.data);
                 break;
             case 'error':
                 console.error('서버 에러:', msg.data.message);

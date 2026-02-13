@@ -2330,6 +2330,637 @@ function setupViewListeners() {
 }
 
 // ============================================================================
+// 임플란트 매니저
+// ============================================================================
+let implantManager = null;
+
+/**
+ * 임플란트 매니저 초기화 (지연 초기화)
+ */
+function initImplantManager() {
+    if (implantManager) return;
+    implantManager = new ImplantManager(scene, camera, renderer);
+}
+
+/**
+ * 임플란트 목록 UI 업데이트
+ */
+function updateImplantList() {
+    const listEl = document.getElementById('implant-list');
+    if (!listEl || !implantManager) { if (listEl) listEl.innerHTML = ''; return; }
+
+    const names = implantManager.getImplantNames();
+    if (names.length === 0) {
+        listEl.innerHTML = '<div style="color: #888;">임플란트 없음</div>';
+        return;
+    }
+
+    listEl.innerHTML = names.map(name => `
+        <div style="display: flex; align-items: center; gap: 4px; padding: 2px 0;">
+            <span style="flex: 1; cursor: pointer; color: ${implantManager.selectedImplant === name ? '#1976d2' : '#444'};"
+                  onclick="selectImplantUI('${name}')">${name}</span>
+            <button onclick="removeImplantUI('${name}')" style="background: none; border: none; color: #e53935; cursor: pointer; font-size: 14px;" title="제거">✕</button>
+        </div>
+    `).join('');
+}
+
+function selectImplantUI(name) {
+    initImplantManager();
+    implantManager.selectImplant(name);
+    updateImplantList();
+}
+
+function removeImplantUI(name) {
+    if (!implantManager) return;
+    implantManager.removeImplant(name);
+    updateImplantList();
+}
+
+// ============================================================================
+// CT/MRI 파이프라인 — 업로드 + 세그멘테이션 + 메쉬 추출
+// ============================================================================
+let uploadedNiftiPath = null;   // 업로드된 NIfTI 경로
+let segLabelsPath = null;       // 세그멘테이션 라벨맵 경로
+let segLabelInfo = null;        // 라벨 정보 배열
+
+/**
+ * NIfTI 파일 업로드 (REST)
+ */
+async function uploadNiftiFile(file) {
+    const formData = new FormData();
+    formData.append('file', file);
+
+    const statusEl = document.getElementById('upload-status');
+    const fnameEl = document.getElementById('upload-filename');
+    const sizeEl = document.getElementById('upload-size');
+
+    try {
+        const resp = await fetch('/api/upload', { method: 'POST', body: formData });
+        if (!resp.ok) throw new Error('업로드 실패: ' + resp.status);
+        const data = await resp.json();
+
+        uploadedNiftiPath = data.path;
+        if (fnameEl) fnameEl.textContent = data.filename;
+        if (sizeEl) sizeEl.textContent = (data.size / 1024 / 1024).toFixed(1) + ' MB';
+        if (statusEl) statusEl.style.display = 'block';
+
+        // 세그멘테이션 버튼 활성화
+        const segBtn = document.getElementById('btn-run-segment');
+        if (segBtn) segBtn.disabled = false;
+
+        console.log('NIfTI 업로드 완료:', data.path);
+    } catch (err) {
+        alert('파일 업로드 실패: ' + err.message);
+    }
+}
+
+/**
+ * 세그멘테이션 실행 (WS)
+ */
+function runSegmentation() {
+    if (!uploadedNiftiPath || !wsClient || !wsClient.connected) {
+        alert('NIfTI를 먼저 업로드하고 서버에 연결하세요.');
+        return;
+    }
+
+    const engine = document.getElementById('seg-engine').value;
+    const fast = document.getElementById('seg-fast').checked;
+
+    const progressEl = document.getElementById('seg-progress');
+    if (progressEl) progressEl.style.display = 'block';
+
+    // 세그멘테이션 요청 데이터 구성
+    const segData = {
+        input_path: uploadedNiftiPath,
+        engine: engine,
+        device: 'gpu',
+        fast: fast,
+    };
+
+    // SpineUnified 엔진일 때 모달리티 추가
+    if (engine === 'spine_unified') {
+        const modalityEl = document.getElementById('seg-modality');
+        const modality = modalityEl ? modalityEl.value : 'auto';
+        if (modality !== 'auto') {
+            segData.modality = modality;
+        }
+    }
+
+    wsClient.send('segment', segData);
+}
+
+/**
+ * 메쉬 추출 실행 (WS)
+ */
+function runExtractMeshes() {
+    if (!segLabelsPath || !wsClient || !wsClient.connected) {
+        alert('세그멘테이션을 먼저 실행하세요.');
+        return;
+    }
+
+    wsClient.send('extract_meshes', {
+        labels_path: segLabelsPath,
+        resolution: 64,
+        smooth: true,
+    });
+}
+
+/**
+ * 세그멘테이션 결과 수신 처리
+ */
+function onSegmentResult(data) {
+    console.log('세그멘테이션 완료:', data);
+    segLabelsPath = data.labels_path;
+    segLabelInfo = data.label_info || [];
+
+    // 라벨 목록 표시
+    const labelsEl = document.getElementById('seg-labels');
+    if (labelsEl) {
+        labelsEl.style.display = 'block';
+        labelsEl.innerHTML = '<div style="font-weight: bold; margin-bottom: 4px;">검출 라벨 (' + data.n_labels + '개):</div>' +
+            segLabelInfo.map(l =>
+                `<div style="padding: 1px 0;">• ${l.name} (${l.material_type}, ${l.voxel_count} voxels)</div>`
+            ).join('');
+    }
+
+    // 진행률 완료
+    const pEl = document.getElementById('seg-progress-text');
+    if (pEl) pEl.textContent = '세그멘테이션 완료!';
+
+    // 메쉬 추출 버튼 활성화
+    const meshBtn = document.getElementById('btn-extract-meshes');
+    if (meshBtn) meshBtn.disabled = false;
+}
+
+/**
+ * 메쉬 추출 결과 수신 — 씬에 메쉬 추가
+ */
+function onMeshesExtracted(data) {
+    console.log('메쉬 추출 완료:', data.meshes?.length, '개');
+
+    if (!data.meshes || data.meshes.length === 0) {
+        alert('추출된 메쉬가 없습니다.');
+        return;
+    }
+
+    clearAllMeshes();
+
+    data.meshes.forEach(m => {
+        const vertices = new Float32Array(m.vertices.flat());
+        const indices = new Uint32Array(m.faces.flat());
+
+        const geometry = new THREE.BufferGeometry();
+        geometry.setAttribute('position', new THREE.BufferAttribute(vertices, 3));
+        geometry.setIndex(new THREE.BufferAttribute(indices, 1));
+        geometry.computeVertexNormals();
+        geometry.computeBoundingBox();
+
+        // 색상 파싱
+        const color = new THREE.Color(m.color || '#888888');
+        const material = new THREE.MeshPhongMaterial({
+            color: color,
+            flatShading: false,
+            side: THREE.DoubleSide,
+            shininess: 30,
+        });
+
+        const mesh = new THREE.Mesh(geometry, material);
+        mesh.name = m.name;
+        mesh.userData.drillable = true;
+        mesh.userData.color = color.getHex();
+        mesh.userData.labelValue = m.label;
+        mesh.userData.materialType = m.material_type;
+        mesh.castShadow = true;
+        mesh.receiveShadow = true;
+
+        scene.add(mesh);
+        meshes[m.name] = mesh;
+    });
+
+    onAllLoaded();
+    fitCameraToScene();
+    console.log('CT/MRI 메쉬 로드 완료:', Object.keys(meshes).length, '개');
+}
+
+// ============================================================================
+// DICOM 원클릭 파이프라인
+// ============================================================================
+
+/**
+ * DICOM 파이프라인 진행률 UI 업데이트
+ */
+function updatePipelineStep(stepId, status) {
+    const el = document.getElementById(stepId);
+    if (!el) return;
+    const icon = el.querySelector('.ps-icon');
+    if (status === 'active') {
+        el.style.color = '#7c4dff';
+        el.style.fontWeight = 'bold';
+        if (icon) icon.textContent = '◉';
+    } else if (status === 'done') {
+        el.style.color = '#4caf50';
+        el.style.fontWeight = 'normal';
+        if (icon) icon.textContent = '✓';
+    } else if (status === 'error') {
+        el.style.color = '#e53935';
+        el.style.fontWeight = 'normal';
+        if (icon) icon.textContent = '✗';
+    }
+}
+
+function updatePipelineStepText(text) {
+    const el = document.getElementById('dicom-pipeline-detail');
+    if (el) el.textContent = text;
+}
+
+/**
+ * DICOM 폴더 파일들을 REST 업로드 후 WS 파이프라인 실행
+ */
+async function runDicomPipeline(files) {
+    if (!files || files.length === 0) return;
+
+    // WS 연결 확인/초기화
+    initAnalysis();
+    if (!wsClient || !wsClient.connected) {
+        alert('서버에 연결되지 않았습니다. 잠시 후 다시 시도하세요.');
+        return;
+    }
+
+    // 진행률 UI 표시
+    const progressEl = document.getElementById('dicom-pipeline-progress');
+    if (progressEl) progressEl.style.display = 'block';
+    const titleEl = document.getElementById('dicom-pipeline-title');
+    if (titleEl) titleEl.textContent = '처리 중...';
+
+    // 모든 스텝 초기화
+    ['ps-upload', 'ps-convert', 'ps-segment', 'ps-mesh'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) {
+            el.style.color = '#888';
+            el.style.fontWeight = 'normal';
+            const icon = el.querySelector('.ps-icon');
+            if (icon) icon.textContent = '○';
+        }
+    });
+
+    // 1단계: 업로드
+    updatePipelineStep('ps-upload', 'active');
+    updatePipelineStepText(`${files.length}개 파일 업로드 중...`);
+
+    const formData = new FormData();
+    for (const f of files) {
+        formData.append('files', f);
+    }
+
+    let uploadData;
+    try {
+        const resp = await fetch('/api/upload_dicom', { method: 'POST', body: formData });
+        if (!resp.ok) {
+            const errText = await resp.text();
+            throw new Error(`업로드 실패 (${resp.status}): ${errText}`);
+        }
+        uploadData = await resp.json();
+        updatePipelineStep('ps-upload', 'done');
+        updatePipelineStepText(`${uploadData.n_files}개 파일 업로드 완료 (${(uploadData.total_size / 1024 / 1024).toFixed(1)} MB)`);
+    } catch (err) {
+        updatePipelineStep('ps-upload', 'error');
+        updatePipelineStepText('업로드 실패: ' + err.message);
+        if (titleEl) titleEl.textContent = '실패';
+        alert('DICOM 업로드 실패: ' + err.message);
+        return;
+    }
+
+    // 2단계: WS로 파이프라인 실행 요청
+    updatePipelineStep('ps-convert', 'active');
+    updatePipelineStepText('DICOM 변환 시작...');
+
+    const engine = document.getElementById('dicom-engine')?.value || 'totalseg';
+    const fast = document.getElementById('dicom-fast')?.checked || false;
+    const smooth = document.getElementById('dicom-smooth')?.checked ?? true;
+
+    wsClient.send('run_dicom_pipeline', {
+        dicom_dir: uploadData.dicom_dir,
+        engine: engine,
+        device: 'gpu',
+        fast: fast,
+        smooth: smooth,
+        resolution: 64,
+    });
+}
+
+/**
+ * 파이프라인 중간 단계 수신 처리
+ */
+function onPipelineStep(data) {
+    console.log('파이프라인 단계:', data.step, data.message);
+    updatePipelineStepText(data.message || '');
+
+    const step = data.step;
+    if (step === 'dicom_convert') {
+        updatePipelineStep('ps-convert', 'active');
+    } else if (step === 'dicom_convert_done') {
+        updatePipelineStep('ps-convert', 'done');
+        // NIfTI 경로 저장 (수동 워크플로우와 호환)
+        if (data.nifti_path) uploadedNiftiPath = data.nifti_path;
+    } else if (step === 'segmentation' || step === 'segment') {
+        updatePipelineStep('ps-segment', 'active');
+    } else if (step === 'segmentation_done') {
+        updatePipelineStep('ps-segment', 'done');
+        if (data.labels_path) segLabelsPath = data.labels_path;
+        if (data.label_info) segLabelInfo = data.label_info;
+    } else if (step === 'mesh_extract') {
+        updatePipelineStep('ps-mesh', 'active');
+    } else if (step === 'done') {
+        // 개별 하위 단계 완료 메시지
+    }
+}
+
+/**
+ * 파이프라인 최종 결과 수신 — 메쉬 표시
+ */
+function onPipelineResult(data) {
+    console.log('DICOM 파이프라인 완료:', data.meshes?.length, '개 메쉬');
+
+    updatePipelineStep('ps-mesh', 'done');
+    const titleEl = document.getElementById('dicom-pipeline-title');
+    if (titleEl) titleEl.textContent = '완료!';
+    updatePipelineStepText(`${data.meshes?.length || 0}개 3D 모델 생성됨`);
+
+    // NIfTI/라벨 경로 저장 (수동 워크플로우 호환)
+    if (data.nifti_path) uploadedNiftiPath = data.nifti_path;
+    if (data.labels_path) segLabelsPath = data.labels_path;
+    if (data.seg_info) segLabelInfo = data.seg_info;
+
+    // 기존 onMeshesExtracted 재사용
+    onMeshesExtracted({ meshes: data.meshes });
+}
+
+// ============================================================================
+// 후처리 확장 — 수술 전/후 비교
+// ============================================================================
+let preOpResults = null;  // 수술 전 결과 캐시
+
+function savePreOpResults() {
+    if (!postProcessor || !postProcessor.data) {
+        alert('해석 결과가 없습니다.');
+        return;
+    }
+    preOpResults = JSON.parse(JSON.stringify(postProcessor.data));
+    const compareBtn = document.getElementById('btn-compare');
+    if (compareBtn) compareBtn.disabled = false;
+    alert('수술 전 결과 저장 완료');
+}
+
+function showComparison() {
+    if (!preOpResults || !postProcessor || !postProcessor.data) {
+        alert('수술 전/후 결과가 모두 필요합니다.');
+        return;
+    }
+    // 차이 계산: 현재 - 수술 전
+    const preDisps = preOpResults.displacements;
+    const postDisps = postProcessor.data.displacements;
+    const n = Math.min(preDisps.length, postDisps.length);
+
+    const diffDisps = [];
+    for (let i = 0; i < n; i++) {
+        diffDisps.push([
+            (postDisps[i][0] || 0) - (preDisps[i][0] || 0),
+            (postDisps[i][1] || 0) - (preDisps[i][1] || 0),
+            (postDisps[i][2] || 0) - (preDisps[i][2] || 0),
+        ]);
+    }
+
+    // 차이 데이터로 시각화
+    const diffData = { ...postProcessor.data, displacements: diffDisps, info: { ...postProcessor.data.info, method: 'difference' } };
+    postProcessor.loadResults(diffData);
+}
+
+// ============================================================================
+// 재료 프리셋 → 수동 편집 동기화
+// ============================================================================
+const MATERIAL_PRESETS = {
+    bone:             { E: 15e9,  nu: 0.3,  density: 1850 },
+    cancellous_bone:  { E: 1e9,   nu: 0.3,  density: 1100 },
+    disc:             { E: 10e6,  nu: 0.45, density: 1200 },
+    soft_tissue:      { E: 1e6,   nu: 0.49, density: 1050 },
+    titanium:         { E: 110e9, nu: 0.34, density: 4500 },
+    peek:             { E: 4e9,   nu: 0.38, density: 1320 },
+    cobalt_chrome:    { E: 230e9, nu: 0.30, density: 8300 },
+    stainless_steel:  { E: 200e9, nu: 0.30, density: 7900 },
+};
+
+function syncMaterialPreset() {
+    const preset = document.getElementById('material-preset').value;
+    if (preset === 'custom') return;  // 사용자 직접 입력
+
+    const p = MATERIAL_PRESETS[preset];
+    if (!p) return;
+
+    const eInput = document.getElementById('mat-E');
+    const nuInput = document.getElementById('mat-nu');
+    const densInput = document.getElementById('mat-density');
+    if (eInput) eInput.value = p.E;
+    if (nuInput) nuInput.value = p.nu;
+    if (densInput) densInput.value = p.density;
+}
+
+// ============================================================================
+// 확장 이벤트 리스너 — CT/MRI + 임플란트 + 비교
+// ============================================================================
+function setupExtendedListeners() {
+    // DICOM 원클릭 파이프라인
+    const dicomInput = document.getElementById('dicom-input');
+    const dicomBtn = document.getElementById('btn-dicom-pipeline');
+    if (dicomBtn && dicomInput) {
+        dicomBtn.addEventListener('click', () => dicomInput.click());
+        dicomInput.addEventListener('change', (e) => {
+            if (e.target.files && e.target.files.length > 0) {
+                runDicomPipeline(e.target.files);
+            }
+            e.target.value = '';  // 같은 폴더 재선택 가능
+        });
+    }
+
+    // NIfTI 업로드
+    const niftiInput = document.getElementById('nifti-input');
+    const uploadBtn = document.getElementById('btn-upload-nifti');
+    if (uploadBtn && niftiInput) {
+        uploadBtn.addEventListener('click', () => niftiInput.click());
+        niftiInput.addEventListener('change', (e) => {
+            if (e.target.files[0]) uploadNiftiFile(e.target.files[0]);
+        });
+    }
+
+    // 세그멘테이션 실행
+    const segBtn = document.getElementById('btn-run-segment');
+    if (segBtn) segBtn.addEventListener('click', () => {
+        initAnalysis();
+        runSegmentation();
+    });
+
+    // 엔진 선택 → 모달리티 섹션 토글
+    const segEngineSelect = document.getElementById('seg-engine');
+    const modalitySection = document.getElementById('modality-section');
+    if (segEngineSelect && modalitySection) {
+        segEngineSelect.addEventListener('change', () => {
+            modalitySection.style.display =
+                segEngineSelect.value === 'spine_unified' ? 'block' : 'none';
+        });
+    }
+
+    // 메쉬 추출
+    const meshBtn = document.getElementById('btn-extract-meshes');
+    if (meshBtn) meshBtn.addEventListener('click', () => {
+        initAnalysis();
+        runExtractMeshes();
+    });
+
+    // 임플란트 Import
+    const implantInput = document.getElementById('implant-input');
+    const implantBtn = document.getElementById('btn-import-implant');
+    if (implantBtn && implantInput) {
+        implantBtn.addEventListener('click', () => implantInput.click());
+        implantInput.addEventListener('change', async (e) => {
+            if (!e.target.files[0]) return;
+            initImplantManager();
+            const matType = document.getElementById('implant-material').value;
+            try {
+                await implantManager.loadImplantSTL(e.target.files[0], null, matType);
+                updateImplantList();
+            } catch (err) {
+                alert('임플란트 로드 실패: ' + err.message);
+            }
+            e.target.value = '';  // 같은 파일 재선택 가능
+        });
+    }
+
+    // 임플란트 TransformControls 모드
+    const trBtn = document.getElementById('btn-impl-translate');
+    const roBtn = document.getElementById('btn-impl-rotate');
+    const scBtn = document.getElementById('btn-impl-scale');
+    if (trBtn) trBtn.addEventListener('click', () => { if (implantManager) implantManager.setTransformMode('translate'); });
+    if (roBtn) roBtn.addEventListener('click', () => { if (implantManager) implantManager.setTransformMode('rotate'); });
+    if (scBtn) scBtn.addEventListener('click', () => { if (implantManager) implantManager.setTransformMode('scale'); });
+
+    // 수술 계획 저장
+    const savePlanBtn = document.getElementById('btn-save-plan');
+    if (savePlanBtn) savePlanBtn.addEventListener('click', () => {
+        if (!implantManager) { alert('임플란트가 없습니다.'); return; }
+        const plan = implantManager.exportPlan();
+        // BC/재료 정보도 추가
+        if (preProcessor) {
+            plan.boundary_conditions = preProcessor.getAllBC ? preProcessor.getAllBC() : [];
+        }
+        const blob = new Blob([JSON.stringify(plan, null, 2)], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'surgical_plan.json';
+        a.click();
+        URL.revokeObjectURL(url);
+    });
+
+    // 수술 계획 로드
+    const planInput = document.getElementById('plan-input');
+    const loadPlanBtn = document.getElementById('btn-load-plan');
+    if (loadPlanBtn && planInput) {
+        loadPlanBtn.addEventListener('click', () => planInput.click());
+        planInput.addEventListener('change', (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = (ev) => {
+                try {
+                    const plan = JSON.parse(ev.target.result);
+                    initImplantManager();
+                    implantManager.importPlan(plan);
+                    updateImplantList();
+                    console.log('수술 계획 로드 완료');
+                } catch (err) {
+                    alert('계획 파일 파싱 실패: ' + err.message);
+                }
+            };
+            reader.readAsText(file);
+            e.target.value = '';
+        });
+    }
+
+    // 자동 재료 할당
+    const autoMatBtn = document.getElementById('btn-auto-material');
+    if (autoMatBtn) autoMatBtn.addEventListener('click', () => {
+        if (!wsClient || !wsClient.connected) {
+            alert('서버에 연결되지 않았습니다.');
+            return;
+        }
+        // 라벨 값 수집 (현재 메쉬의 userData.labelValue)
+        const labelValues = [];
+        Object.values(meshes).forEach(mesh => {
+            const lbl = mesh.userData.labelValue || 0;
+            const positions = mesh.geometry.attributes.position;
+            for (let i = 0; i < positions.count; i++) {
+                labelValues.push(lbl);
+            }
+        });
+        if (labelValues.length === 0) {
+            alert('라벨 데이터가 없습니다. CT/MRI 파이프라인을 먼저 실행하세요.');
+            return;
+        }
+        wsClient.send('auto_material', { label_values: labelValues });
+    });
+
+    // 재료 프리셋 변경 → 수동 편집 필드 동기화
+    const presetSel = document.getElementById('material-preset');
+    if (presetSel) presetSel.addEventListener('change', syncMaterialPreset);
+
+    // 후처리 비교
+    const savePreOpBtn = document.getElementById('btn-save-preop');
+    if (savePreOpBtn) savePreOpBtn.addEventListener('click', savePreOpResults);
+    const compareBtn = document.getElementById('btn-compare');
+    if (compareBtn) compareBtn.addEventListener('click', showComparison);
+
+    // 필터 반경 슬라이더
+    const filterRadius = document.getElementById('filter-radius');
+    if (filterRadius) filterRadius.addEventListener('input', (e) => {
+        document.getElementById('filter-radius-value').textContent = e.target.value;
+        // 필터 기능은 향후 확장
+    });
+
+    // WS 확장 콜백 등록
+    if (wsClient) {
+        wsClient.onSegmentResult(onSegmentResult);
+        wsClient.onMeshesResult(onMeshesExtracted);
+        wsClient.onMaterialResult((data) => {
+            console.log('자동 재료 매핑:', data);
+            alert(`재료 매핑 완료: ${data.materials?.length || 0}종\n수동 조정은 Pre-process 탭에서 가능합니다.`);
+        });
+        wsClient.onPipelineStep(onPipelineStep);
+        wsClient.onPipelineResult(onPipelineResult);
+    }
+}
+
+// ============================================================================
+// initAnalysis 확장 — WS 콜백 등록
+// ============================================================================
+const _origInitAnalysis = initAnalysis;
+initAnalysis = function() {
+    _origInitAnalysis();
+    // WS 확장 콜백 등록 (initAnalysis 호출 시 wsClient가 생성된 후)
+    if (wsClient) {
+        if (!wsClient._onSegmentResult) {
+            wsClient.onSegmentResult(onSegmentResult);
+            wsClient.onMeshesResult(onMeshesExtracted);
+            wsClient.onMaterialResult((data) => {
+                console.log('자동 재료 매핑:', data);
+                alert(`재료 매핑 완료: ${data.materials?.length || 0}종`);
+            });
+            wsClient.onPipelineStep(onPipelineStep);
+            wsClient.onPipelineResult(onPipelineResult);
+        }
+    }
+};
+
+// ============================================================================
 // 시작
 // ============================================================================
 init();
+setupExtendedListeners();
