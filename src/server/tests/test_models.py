@@ -94,7 +94,7 @@ class TestSurgicalPlan:
 class TestSegmentationRequest:
     def test_defaults(self):
         req = SegmentationRequest(input_path="/tmp/test.nii.gz")
-        assert req.engine == "totalseg"
+        assert req.engine == "totalspineseg"
         assert req.device == "gpu"
         assert req.fast is False
 

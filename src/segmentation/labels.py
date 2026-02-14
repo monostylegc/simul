@@ -175,6 +175,16 @@ TOTALSPINESEG_TO_STANDARD: dict[int, int] = {
     32: SpineLabel.L3,
     33: SpineLabel.L4,
     34: SpineLabel.L5,
+    # 천골 세부 분절 (일부 모델 버전에서 출력)
+    41: SpineLabel.SACRUM,
+    42: SpineLabel.SACRUM,
+    43: SpineLabel.SACRUM,
+    44: SpineLabel.SACRUM,
+    45: SpineLabel.SACRUM,
+    46: SpineLabel.SACRUM,
+    47: SpineLabel.SACRUM,
+    48: SpineLabel.SACRUM,
+    49: SpineLabel.SACRUM,
     50: SpineLabel.SACRUM,
     # 디스크
     63: SpineLabel.C2C3,
@@ -200,7 +210,14 @@ TOTALSPINESEG_TO_STANDARD: dict[int, int] = {
     83: SpineLabel.L3L4,
     84: SpineLabel.L4L5,
     85: SpineLabel.L5S1,
+    # 천골 디스크 (일부 모델 버전에서 출력)
+    91: SpineLabel.L5S1,
+    92: SpineLabel.L5S1,
+    93: SpineLabel.L5S1,
+    94: SpineLabel.L5S1,
+    95: SpineLabel.L5S1,
     # 연조직
+    100: SpineLabel.SPINAL_CANAL,
     200: SpineLabel.SPINAL_CORD,
     201: SpineLabel.SPINAL_CANAL,
 }
@@ -296,3 +313,127 @@ def convert_to_standard(
     for src_label, std_label in source_mapping.items():
         output[label_array == src_label] = std_label
     return output
+
+
+# VerSe2020 원본 라벨 → SpineLabel 매핑
+# VerSe2020: 1~24=C1~L5, 25=SACRUM (일부 버전은 26~28=S2~)
+VERSE_TO_STANDARD: dict[int, int] = {
+    1: SpineLabel.C1,
+    2: SpineLabel.C2,
+    3: SpineLabel.C3,
+    4: SpineLabel.C4,
+    5: SpineLabel.C5,
+    6: SpineLabel.C6,
+    7: SpineLabel.C7,
+    8: SpineLabel.T1,
+    9: SpineLabel.T2,
+    10: SpineLabel.T3,
+    11: SpineLabel.T4,
+    12: SpineLabel.T5,
+    13: SpineLabel.T6,
+    14: SpineLabel.T7,
+    15: SpineLabel.T8,
+    16: SpineLabel.T9,
+    17: SpineLabel.T10,
+    18: SpineLabel.T11,
+    19: SpineLabel.T12,
+    20: SpineLabel.L1,
+    21: SpineLabel.L2,
+    22: SpineLabel.L3,
+    23: SpineLabel.L4,
+    24: SpineLabel.L5,
+    25: SpineLabel.SACRUM,
+    # 26~28: S2~S4 (일부 케이스만) → 모두 SACRUM으로 매핑
+    26: SpineLabel.SACRUM,
+    27: SpineLabel.SACRUM,
+    28: SpineLabel.SACRUM,
+}
+
+# CTSpine1K 원본 라벨 → SpineLabel 매핑
+# CTSpine1K: VerSe2020과 동일 체계 (1~25: C1~SACRUM)
+CTSPINE1K_TO_STANDARD: dict[int, int] = {
+    1: SpineLabel.C1,
+    2: SpineLabel.C2,
+    3: SpineLabel.C3,
+    4: SpineLabel.C4,
+    5: SpineLabel.C5,
+    6: SpineLabel.C6,
+    7: SpineLabel.C7,
+    8: SpineLabel.T1,
+    9: SpineLabel.T2,
+    10: SpineLabel.T3,
+    11: SpineLabel.T4,
+    12: SpineLabel.T5,
+    13: SpineLabel.T6,
+    14: SpineLabel.T7,
+    15: SpineLabel.T8,
+    16: SpineLabel.T9,
+    17: SpineLabel.T10,
+    18: SpineLabel.T11,
+    19: SpineLabel.T12,
+    20: SpineLabel.L1,
+    21: SpineLabel.L2,
+    22: SpineLabel.L3,
+    23: SpineLabel.L4,
+    24: SpineLabel.L5,
+    25: SpineLabel.SACRUM,
+}
+
+
+def build_spider_mapping(
+    n_vertebrae: int,
+    bottom_vertebra: str = "L5",
+) -> dict[int, int]:
+    """SPIDER 데이터셋 동적 라벨 매핑 생성.
+
+    SPIDER는 상대적 순번(최하위=1)이므로 각 케이스별로 매핑을 생성해야 한다.
+    척추 라벨: 1~N (1=최하위 척추골, N=최상위 척추골)
+    디스크 라벨: 201~(200+N-1) (201=최하위 디스크)
+    척추관 라벨: 100=SPINAL_CANAL
+
+    Args:
+        n_vertebrae: 해당 케이스의 척추골 수
+        bottom_vertebra: 최하위 척추골 이름 (기본 "L5")
+
+    Returns:
+        SPIDER 라벨 → SpineLabel 매핑
+    """
+    # 모든 척추골 목록 (C1부터 SACRUM까지)
+    all_vertebrae = [m for m in SpineLabel if SpineLabel.is_vertebra(m.value)]
+    all_vertebrae.sort(key=lambda m: m.value)  # C1, C2, ..., SACRUM
+
+    # 최하위 척추골 인덱스 찾기
+    bottom_label = SpineLabel[bottom_vertebra.upper()]
+    bottom_idx = next(i for i, m in enumerate(all_vertebrae) if m == bottom_label)
+
+    mapping: dict[int, int] = {}
+
+    # 척추골 매핑: SPIDER 1=bottom, 2=bottom-1, ...
+    for spider_id in range(1, n_vertebrae + 1):
+        vert_idx = bottom_idx - (spider_id - 1)
+        if 0 <= vert_idx < len(all_vertebrae):
+            mapping[spider_id] = all_vertebrae[vert_idx].value
+
+    # 디스크 매핑: SPIDER 201=최하위 디스크 (bottom과 bottom+1 사이)
+    all_discs = [m for m in SpineLabel if SpineLabel.is_disc(m.value)]
+    all_discs.sort(key=lambda m: m.value)  # C2C3, C3C4, ..., L5S1
+
+    # 디스크 인덱스: L4L5 디스크의 인덱스를 기준으로 계산
+    # bottom이 L5이면 최하위 디스크는 L5S1(=222번째 디스크, all_discs 인덱스 22)
+    # bottom이 L5이면 가장 아래 디스크가 L5S1
+    # bottom_vertebra의 아래 디스크 = bottom과 그 아래(sacrum) 사이
+    # 디스크 이름 체계: C2C3(idx0)는 C2(idx1)와 C3(idx2) 사이
+    # 즉 disc[i]는 vertebra[i+1]과 vertebra[i+2] 사이
+    # bottom_idx 척추골 아래 디스크 = disc[bottom_idx - 1]
+    bottom_disc_idx = bottom_idx - 1  # L5→disc_idx=22(L5S1)이면 정확
+
+    for spider_disc_id in range(201, 201 + n_vertebrae - 1):
+        disc_offset = spider_disc_id - 201
+        disc_idx = bottom_disc_idx - disc_offset
+        if 0 <= disc_idx < len(all_discs):
+            mapping[spider_disc_id] = all_discs[disc_idx].value
+
+    # 척추관 매핑
+    mapping[100] = SpineLabel.SPINAL_CANAL
+
+    return mapping

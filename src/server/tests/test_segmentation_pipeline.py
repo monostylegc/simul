@@ -21,7 +21,7 @@ class TestSegmentationPipeline:
     def test_request_defaults(self):
         """요청 기본값 확인."""
         request = SegmentationRequest(input_path="/tmp/test.nii.gz")
-        assert request.engine == "totalseg"
+        assert request.engine == "totalspineseg"
         assert request.device == "gpu"
         assert request.fast is False
 

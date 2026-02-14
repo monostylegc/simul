@@ -60,7 +60,7 @@ class SurgicalPlan(BaseModel):
 class SegmentationRequest(BaseModel):
     """세그멘테이션 요청."""
     input_path: str
-    engine: str = "totalseg"             # totalseg | totalspineseg | spine_unified
+    engine: str = "totalspineseg"        # totalspineseg | totalseg | spine_unified
     device: str = "gpu"                  # gpu | cpu
     fast: bool = False                   # 빠른 모드 (저해상도)
     modality: Optional[str] = None       # CT | MRI | None(자동 감지)

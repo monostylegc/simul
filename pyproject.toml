@@ -21,7 +21,10 @@ dependencies = [
     "rich>=13.0",
     "scikit-image>=0.26.0",
     "python-multipart>=0.0.22",
+    "torch>=2.6.0",
+    "torchvision>=0.21.0",
     "nnunetv2>=2.6.2",
+    "totalspineseg>=20260129",
 ]
 
 [project.scripts]
@@ -46,7 +49,17 @@ dev = [
     "hatchling>=1.18",
 ]
 
-# ROCm PyTorch — torch/torchvision은 uv pip로 별도 관리
-# uv pip install torch torchvision --index-url https://download.pytorch.org/whl/rocm6.3
+# PyTorch GPU 인덱스 (기본: CUDA 12.4)
+# AMD GPU 머신에서는 uv sync 후 아래 명령 실행:
+#   uv pip install torch torchvision --index-url https://download.pytorch.org/whl/rocm6.3
+[[tool.uv.index]]
+name = "pytorch-cu124"
+url = "https://download.pytorch.org/whl/cu124"
+explicit = true
+
+[tool.uv.sources]
+torch = { index = "pytorch-cu124" }
+torchvision = { index = "pytorch-cu124" }
+
 [tool.uv]
 no-build-isolation-package = ["nnunetv2"]

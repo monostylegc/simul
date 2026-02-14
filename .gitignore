@@ -9,6 +9,9 @@ wheels/
 # Virtual environments
 .venv
 
+# uv 로컬 설정
+uv.toml
+
 node_modules
 
 # 학습 데이터/모델 (대용량)

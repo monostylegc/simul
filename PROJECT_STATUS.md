@@ -1,6 +1,6 @@
 # Spine Surgery Planner — 프로젝트 목표 및 워크플로우
 
-최종 업데이트: 2026-02-14
+최종 업데이트: 2026-02-15
 
 ---
 
@@ -330,11 +330,83 @@ REST 엔드포인트:
 
 # 프로젝트 진행 상황
 
-최종 업데이트: 2026-02-14
+최종 업데이트: 2026-02-15
 
 ## 오늘 작업 내역 (2026-02-14)
 
 ### 완료
+
+3. **GPU 자동 세그멘테이션 파이프라인 구축 + 실제 CT 검증** — 테스트 132개 전체 passed
+
+   RTX 4070 Ti SUPER 16GB GPU 활용, TotalSpineSeg로 **척추골+디스크+척수+척추관** 자동 세그멘테이션.
+
+   - **PyTorch CUDA 활성화**: CPU→CUDA 12.4 전환 (`torch 2.6.0+cu124`)
+     - `pyproject.toml`에 `[[tool.uv.index]]` CUDA 인덱스 설정
+     - AMD GPU 머신: `uv pip install torch torchvision --index-url .../rocm6.3`으로 오버라이드
+   - **TotalSpineSeg 엔진 업그레이드** (`src/segmentation/totalspineseg.py`)
+     - `supported_modalities`: MRI만 → **CT+MRI** 둘 다 지원
+     - venv 내 스크립트 경로 자동 탐색 (Windows 호환)
+     - GPU 메모리 격리 (subprocess 실행)
+   - **기본 엔진 변경**: `totalseg`(척추골만) → `totalspineseg`(디스크 포함)
+     - `models.py`: SegmentationRequest 기본 엔진 변경
+     - `ws_handler.py`: DICOM 파이프라인 auto → totalspineseg (CT/MRI 무관)
+     - `index.html`: 프론트엔드 엔진 선택 UI 업데이트
+   - **TotalSpineSeg 확장 라벨 매핑 보완** (`labels.py`)
+     - 천골 세부 분절 (41~49) → SACRUM, 천골 디스크 (91~95) → L5S1
+     - 척추관 라벨 100 → SPINAL_CANAL
+   - **실제 요추 CT 세그멘테이션 검증 완료** (512x512x151, L-spine 2.0mm)
+     - GPU(RTX 4070 Ti Super) 159초 소요
+     - 검출: L1, L2, L3, SACRUM + L1L2, L2L3, L5S1 디스크 + 척추관
+     - 총 3,676,564 non-zero voxels, 8개 구조물 3D 메쉬 추출 완료
+
+   **수정 파일 (6개)**:
+   - `pyproject.toml` — CUDA 인덱스 + torch/torchvision/totalspineseg 의존성
+   - `src/segmentation/totalspineseg.py` — CT+MRI 지원, venv 경로 탐색
+   - `src/server/models.py` — 기본 엔진 totalspineseg
+   - `src/server/ws_handler.py` — auto → totalspineseg
+   - `src/simulator/index.html` — 엔진 선택 UI
+   - `src/server/tests/` — 기본 엔진 테스트 업데이트
+
+2. **nnU-Net v2 모델 학습 파이프라인 구현** — 테스트 44개 전체 passed
+
+   원본 데이터셋(VerSe2020/CTSpine1K/SPIDER) → nnU-Net 형식 변환 → 학습 실행까지의 전체 파이프라인.
+
+   - **원본 라벨 매핑 추가** (`src/segmentation/labels.py`)
+     - `VERSE_TO_STANDARD`: VerSe2020 (1~28) → SpineLabel
+     - `CTSPINE1K_TO_STANDARD`: CTSpine1K (1~25) → SpineLabel
+     - `build_spider_mapping()`: SPIDER 상대 순번 → SpineLabel 동적 매핑
+
+   - **데이터셋 케이스 탐색** (신규: `src/segmentation/training/dataset_crawl.py`)
+     - `CaseInfo` dataclass: 케이스 ID, 영상/라벨 경로, 데이터셋, 모달리티
+     - `crawl_verse2020/crawl_ctspine1k/crawl_spider/crawl_all`: 데이터셋별 파일 탐색
+
+   - **데이터 준비 오케스트레이션** (신규: `src/segmentation/training/run_pipeline.py`)
+     - CT: NIfTI→라벨변환→(pseudo-label)→merge→검증→전처리→nnU-Net 저장
+     - MRI: NIfTI→SPIDER 동적매핑→검증→전처리→nnU-Net 저장
+     - `skip_existing`, `continue_on_error` 지원 (중단 후 재시작 가능)
+
+   - **nnU-Net 학습 실행** (신규: `src/segmentation/training/run_train.py`)
+     - `TrainConfig`: dataset_id, configuration, folds, epochs, device, debug
+     - `run_plan_and_preprocess()`: subprocess로 nnU-Net 전처리
+     - `run_train()`: fold별 학습 실행
+     - `run_full_training()`: 전처리 + 전체 fold 학습
+     - `export_model()`: 학습 모델 내보내기
+
+   - **CLI 연동** (`src/pipeline/cli.py`)
+     - `prepare-training-data`: 데이터셋 변환 실행 (--pseudo-labels, --dry-run, --continue)
+     - `train`: nnU-Net 학습 실행 (--dataset-id, --config, --folds, --debug, --export)
+
+   - **테스트 추가** (20개 신규): 매핑 완전성, SPIDER 동적 매핑, 크롤 매칭, 스킵 확인
+
+   **신규 파일 (3개)**:
+   - `src/segmentation/training/dataset_crawl.py`
+   - `src/segmentation/training/run_pipeline.py`
+   - `src/segmentation/training/run_train.py`
+
+   **수정 파일 (3개)**:
+   - `src/segmentation/labels.py` — 원본 매핑 3종 추가
+   - `src/pipeline/cli.py` — prepare-training-data 재구현 + train 추가
+   - `src/segmentation/training/tests/test_training.py` — 20개 테스트 추가
 
 1. **DICOM 입력 자동화 파이프라인 구현** — 서버 테스트 35→44개, 전체 44 passed
 

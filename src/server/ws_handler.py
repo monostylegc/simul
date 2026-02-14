@@ -215,15 +215,14 @@ async def _handle_dicom_pipeline(ws: WebSocket, data: dict):
         dicom_modality = patient_info.get("modality", "").upper().strip()
 
         # DICOM modality → 엔진/modality 자동 선택
+        # TotalSpineSeg: CT/MRI 모두 지원 (척추골+디스크+척수+척추관)
         engine = request.engine
         modality = request.modality
         if engine == "auto":
+            engine = "totalspineseg"
             if dicom_modality == "MR":
-                engine = "totalspineseg"
                 modality = modality or "mri"
             else:
-                # CT 또는 감지 실패 시 기본값
-                engine = "totalseg"
                 modality = modality or "ct"
 
         await send_step("segmentation", {

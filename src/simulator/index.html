@@ -269,9 +269,9 @@
                         <label style="font-size: 11px; color: #666;">엔진:</label>
                         <select id="dicom-engine" class="prop-select" style="margin-top: 2px;">
                             <option value="auto">자동 감지 (권장)</option>
-                            <option value="totalseg">TotalSegmentator (CT)</option>
-                            <option value="totalspineseg">TotalSpineSeg (MRI)</option>
-                            <option value="spine_unified">SpineUnified (CT+MRI)</option>
+                            <option value="totalspineseg">TotalSpineSeg (CT+MRI, 디스크포함)</option>
+                            <option value="totalseg">TotalSegmentator (CT 전용)</option>
+                            <option value="spine_unified">SpineUnified (커스텀 모델)</option>
                         </select>
                     </div>
                     <div style="display: flex; gap: 4px; margin-top: 4px;">
@@ -312,9 +312,9 @@
                     <div style="margin-top: 6px;">
                         <label style="font-size: 11px; color: #666;">엔진:</label>
                         <select id="seg-engine" class="prop-select" style="margin-top: 2px;">
-                            <option value="totalseg">TotalSegmentator (CT)</option>
-                            <option value="totalspineseg">TotalSpineSeg (MRI)</option>
-                            <option value="spine_unified">SpineUnified (CT+MRI)</option>
+                            <option value="totalspineseg">TotalSpineSeg (CT+MRI, 디스크포함)</option>
+                            <option value="totalseg">TotalSegmentator (CT 전용)</option>
+                            <option value="spine_unified">SpineUnified (커스텀 모델)</option>
                         </select>
                     </div>
                     <!-- 모달리티 선택 (SpineUnified 전용) -->

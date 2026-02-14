@@ -293,13 +293,18 @@ def prepare_training_data(
     data_dir: Path = typer.Argument(..., help="데이터셋 루트 디렉토리"),
     output_dir: Path = typer.Option("nnUNet_raw", "-o", "--output", help="nnU-Net 출력 디렉토리"),
     dataset_id: int = typer.Option(200, "--dataset-id", help="nnU-Net 데이터셋 ID"),
+    pseudo_labels: bool = typer.Option(False, "--pseudo-labels/--no-pseudo-labels", help="Pseudo-label 사용 여부"),
+    continue_on_error: bool = typer.Option(True, "--continue/--stop-on-error", help="실패 시 계속 여부"),
+    dry_run: bool = typer.Option(False, "--dry-run", help="검증만 실행 (변환 안 함)"),
+    skip_existing: bool = typer.Option(True, "--skip-existing/--overwrite", help="기존 케이스 스킵"),
 ):
     """학습 데이터 → nnU-Net 형식 변환.
 
     data_dir 아래에 VerSe2020/, CTSpine1K/, SPIDER/ 서브디렉토리가 있어야 합니다.
     """
-    from src.segmentation.training.config import DatasetPaths, TrainingPipelineConfig
+    from src.segmentation.training.config import DatasetPaths, TrainingPipelineConfig, NnunetConfig
     from src.segmentation.training.download import validate_all, print_validation_report
+    from src.segmentation.training.dataset_crawl import crawl_all
 
     paths = DatasetPaths(
         verse2020=data_dir / "VerSe2020",
@@ -317,12 +322,123 @@ def prepare_training_data(
         console.print("[red]유효한 데이터셋이 없습니다.[/]")
         raise typer.Exit(1)
 
-    console.print(f"\n[green]{len(valid_datasets)}개 데이터셋 발견.[/]")
-    console.print(
-        "\n[yellow]참고:[/] 전체 변환은 pseudo-label 생성이 포함되어 수 시간 소요됩니다.\n"
-        "nnU-Net 학습 데이터 변환은 별도 스크립트로 실행하세요:\n"
-        f"  python -m src.segmentation.training.convert_nnunet --data-dir {data_dir} -o {output_dir}\n"
+    # 케이스 수 확인
+    all_cases = crawl_all(paths)
+    console.print(f"\n[green]{len(valid_datasets)}개 데이터셋, {len(all_cases)}개 케이스 발견.[/]")
+
+    if dry_run:
+        console.print("\n[yellow]--dry-run 모드: 검증만 완료, 변환 미실행[/]")
+        for case in all_cases[:10]:
+            console.print(f"  {case.case_id} ({case.modality}) — {case.image_path.name}")
+        if len(all_cases) > 10:
+            console.print(f"  ... 외 {len(all_cases) - 10}건")
+        return
+
+    # 파이프라인 설정
+    config = TrainingPipelineConfig(
+        datasets=paths,
+        nnunet=NnunetConfig(dataset_id=dataset_id, output_dir=output_dir),
     )
+
+    # 변환 실행
+    from src.segmentation.training.run_pipeline import run_training_pipeline
+
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("{task.description}"),
+        console=console,
+    ) as progress:
+        task = progress.add_task("[cyan]prepare[/] 시작...", total=None)
+
+        def progress_cb(stage: str, details: dict):
+            msg = details.get("message", "")
+            progress.update(task, description=f"[cyan]{stage}[/] {msg}")
+
+        pipeline_result = run_training_pipeline(
+            config,
+            progress_callback=progress_cb,
+            use_pseudo_labels=pseudo_labels,
+            continue_on_error=continue_on_error,
+            skip_existing=skip_existing,
+        )
+
+    console.print(f"\n[bold]{pipeline_result.summary}[/]")
+
+    # 실패 케이스 출력
+    failed = [r for r in pipeline_result.case_results if not r.success]
+    if failed:
+        console.print(f"\n[red]실패 케이스 ({len(failed)}건):[/]")
+        for r in failed[:20]:
+            console.print(f"  {r.case_id}: {r.message}")
+
+    if pipeline_result.success == 0 and pipeline_result.skipped == 0:
+        raise typer.Exit(1)
+
+
+@app.command()
+def train(
+    dataset_id: int = typer.Option(200, "--dataset-id", help="nnU-Net 데이터셋 ID"),
+    configuration: str = typer.Option("3d_fullres", "--config", "-c", help="학습 설정 (3d_fullres, 2d 등)"),
+    folds: Optional[str] = typer.Option(None, "--folds", help="학습 fold (예: 0,1,2 또는 all)"),
+    epochs: Optional[int] = typer.Option(None, "--epochs", help="최대 에폭 수"),
+    device: str = typer.Option("cuda", "--device", help="연산 장치 (cuda/cpu)"),
+    debug: bool = typer.Option(False, "--debug", help="디버그 모드 (5에폭, fold 0)"),
+    export: bool = typer.Option(False, "--export", help="학습 후 모델 내보내기"),
+    nnunet_raw: Path = typer.Option("nnUNet_raw", "--raw", help="nnU-Net raw 경로"),
+    nnunet_preprocessed: Path = typer.Option("nnUNet_preprocessed", "--preprocessed", help="전처리 경로"),
+    nnunet_results: Path = typer.Option("nnUNet_results", "--results", help="결과 경로"),
+):
+    """nnU-Net v2 학습 실행."""
+    from src.segmentation.training.run_train import (
+        TrainConfig, run_full_training, export_model,
+    )
+
+    # fold 파싱
+    fold_list = None
+    if folds:
+        if folds.lower() == "all":
+            fold_list = [0, 1, 2, 3, 4]
+        else:
+            fold_list = [int(f.strip()) for f in folds.split(",")]
+
+    config = TrainConfig(
+        dataset_id=dataset_id,
+        configuration=configuration,
+        folds=fold_list,
+        epochs=epochs,
+        device=device,
+        debug=debug,
+        nnunet_raw=nnunet_raw,
+        nnunet_preprocessed=nnunet_preprocessed,
+        nnunet_results=nnunet_results,
+    )
+
+    console.print(f"\n[bold]nnU-Net 학습 시작[/]")
+    console.print(f"  데이터셋: {config.dataset_name}")
+    console.print(f"  설정: {config.configuration}")
+    console.print(f"  Folds: {config.folds}")
+    console.print(f"  에폭: {config.epochs or '기본값(1000)'}")
+    console.print(f"  장치: {config.device}")
+    if config.debug:
+        console.print("  [yellow]디버그 모드[/]")
+    console.print()
+
+    success = run_full_training(config)
+
+    if success:
+        console.print("\n[bold green]학습 완료![/]")
+
+        if export:
+            console.print("\n[cyan]모델 내보내기 중...[/]")
+            export_path = export_model(config)
+            if export_path:
+                console.print(f"[green]모델 내보내기 완료[/]: {export_path}")
+            else:
+                console.print("[red]모델 내보내기 실패[/]")
+                raise typer.Exit(1)
+    else:
+        console.print("\n[red]학습 실패[/]")
+        raise typer.Exit(1)
 
 
 @app.command()
