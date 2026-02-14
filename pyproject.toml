@@ -21,6 +21,7 @@ dependencies = [
     "rich>=13.0",
     "scikit-image>=0.26.0",
     "python-multipart>=0.0.22",
+    "nnunetv2>=2.6.2",
 ]
 
 [project.scripts]
@@ -28,9 +29,9 @@ spine-sim = "src.pipeline.cli:app"
 
 [project.optional-dependencies]
 seg-ct = ["TotalSegmentator>=2.0"]
-seg-mri = ["totalspineseg", "nnunetv2==2.6.2"]
+seg-mri = ["totalspineseg", "nnunetv2>=2.5"]
 seg-unified = ["nnunetv2>=2.5"]
-seg-train = ["nnunetv2>=2.5", "torch>=2.0", "batchgenerators>=0.25"]
+seg-train = ["nnunetv2>=2.5", "batchgenerators>=0.25"]
 
 [build-system]
 requires = ["hatchling"]
@@ -44,3 +45,8 @@ dev = [
     "pytest>=9.0",
     "hatchling>=1.18",
 ]
+
+# ROCm PyTorch — torch/torchvision은 uv pip로 별도 관리
+# uv pip install torch torchvision --index-url https://download.pytorch.org/whl/rocm6.3
+[tool.uv]
+no-build-isolation-package = ["nnunetv2"]

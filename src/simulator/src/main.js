@@ -2634,7 +2634,7 @@ async function runDicomPipeline(files) {
     updatePipelineStep('ps-convert', 'active');
     updatePipelineStepText('DICOM 변환 시작...');
 
-    const engine = document.getElementById('dicom-engine')?.value || 'totalseg';
+    const engine = document.getElementById('dicom-engine')?.value || 'auto';
     const fast = document.getElementById('dicom-fast')?.checked || false;
     const smooth = document.getElementById('dicom-smooth')?.checked ?? true;
 

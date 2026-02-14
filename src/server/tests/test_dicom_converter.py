@@ -165,7 +165,7 @@ class TestDicomPipelineRequest:
     def test_defaults(self):
         from src.server.models import DicomPipelineRequest
         req = DicomPipelineRequest(dicom_dir="/tmp/test")
-        assert req.engine == "totalseg"
+        assert req.engine == "auto"
         assert req.device == "gpu"
         assert req.fast is False
         assert req.smooth is True

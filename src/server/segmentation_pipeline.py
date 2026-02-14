@@ -48,7 +48,19 @@ def run_segmentation(
     if request.engine == "spine_unified" and request.modality:
         seg_kwargs["modality"] = request.modality
 
-    engine.segment(**seg_kwargs)
+    try:
+        engine.segment(**seg_kwargs)
+    except Exception as gpu_err:
+        # GPU 실패 시 CPU 자동 폴백
+        if seg_kwargs.get("device", "gpu") != "cpu":
+            if progress_callback:
+                progress_callback("segment", {
+                    "message": f"GPU 실패 ({gpu_err}), CPU로 재시도...",
+                })
+            seg_kwargs["device"] = "cpu"
+            engine.segment(**seg_kwargs)
+        else:
+            raise
 
     # 3. 표준 라벨로 변환
     if progress_callback:

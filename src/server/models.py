@@ -89,9 +89,9 @@ class AutoMaterialRequest(BaseModel):
 class DicomPipelineRequest(BaseModel):
     """DICOM 원클릭 파이프라인 요청 — 변환+세그멘테이션+메쉬 추출."""
     dicom_dir: str                       # DICOM 파일 디렉토리 경로
-    engine: str = "totalseg"             # totalseg | totalspineseg | spine_unified
+    engine: str = "auto"                 # auto | totalseg | totalspineseg | spine_unified
     device: str = "gpu"                  # gpu | cpu
     fast: bool = False                   # 빠른 모드
-    modality: Optional[str] = None       # CT | MRI | None
+    modality: Optional[str] = None       # CT | MRI | None (auto면 DICOM 태그에서 감지)
     smooth: bool = True                  # 메쉬 스무딩
     resolution: int = 64                 # 메쉬 해상도

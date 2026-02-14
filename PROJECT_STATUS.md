@@ -55,13 +55,33 @@
 
 ---
 
-## End-to-End 워크플로우 (6단계)
+## End-to-End 워크플로우 (7단계)
 
 ```
-CT/MRI NIfTI ──→ [1] 세그멘테이션 ──→ [2] 3D 모델 생성 ──→ [3] 수술 도구 배치
-                                                                     │
-                    [6] 후처리 시각화 ←── [5] 구조해석 ←── [4] 전처리  ←┘
+DICOM 폴더 ──→ [0] DICOM→NIfTI 변환 ──→ [1] 세그멘테이션 ──→ [2] 3D 모델 생성 ──→ [3] 수술 도구 배치
+                                                                                            │
+                                          [6] 후처리 시각화 ←── [5] 구조해석 ←── [4] 전처리  ←┘
 ```
+
+> **원클릭 자동화**: 0단계~2단계는 DICOM 폴더 선택만으로 자동 연쇄 실행 가능
+
+### 0단계: DICOM 원클릭 파이프라인 — ✅ 완료
+
+병원에서 DICOM 폴더를 선택하면 변환→세그멘테이션→메쉬 추출→3D 표시까지 자동으로 처리한다.
+
+| 항목 | 내용 |
+|------|------|
+| **입력** | DICOM 폴더 (webkitdirectory로 브라우저에서 폴더 선택) |
+| **출력** | 3D 표면 메쉬 (Three.js 렌더링) |
+| **자동화 단계** | DICOM 업로드 → NIfTI 변환 → 세그멘테이션 → 메쉬 추출 (4단계 연쇄) |
+| **DICOM 변환** | SimpleITK `ImageSeriesReader` — 복수 시리즈 시 최대 슬라이스 자동 선택 |
+| **Modality 감지** | DICOM 태그에서 CT/MR 자동 감지 → 엔진 자동 선택 (CT→TotalSeg, MR→TotalSpineSeg) |
+| **GPU 폴백** | GPU 실패 시 CPU 자동 재시도 |
+| **핵심 파일** | `src/server/dicom_converter.py`, `src/server/ws_handler.py` |
+
+**프로토콜**: REST `POST /api/upload_dicom` (파일 업로드) → WS `run_dicom_pipeline` → `pipeline_step` (진행률) → `pipeline_result` (최종 메쉬)
+
+---
 
 ### 1단계: 세그멘테이션 (CT/MRI → 라벨맵) — ✅ 완료
 
@@ -219,12 +239,13 @@ src/
 ├── server/                      # FastAPI 백엔드
 │   ├── app.py                   # REST(업로드) + WebSocket 엔드포인트 + 정적 파일 서빙
 │   ├── models.py                # Pydantic 모델 (AnalysisRequest, SurgicalPlan 등)
-│   ├── ws_handler.py            # WebSocket 메시지 라우팅 (4종 파이프라인 호출)
+│   ├── ws_handler.py            # WebSocket 메시지 라우팅 (5종 파이프라인 호출)
+│   ├── dicom_converter.py       # DICOM→NIfTI 변환 (SimpleITK, 복수 시리즈 자동 선택)
 │   ├── analysis_pipeline.py     # FEA 프레임워크 호출 파이프라인
-│   ├── segmentation_pipeline.py # 세그멘테이션 엔진 호출
+│   ├── segmentation_pipeline.py # 세그멘테이션 엔진 호출 (GPU→CPU 자동 폴백)
 │   ├── mesh_extract_pipeline.py # Marching Cubes 메쉬 추출
 │   ├── auto_material.py         # SpineLabel → 재료 자동 매핑 (8종 DB)
-│   └── tests/                   # 서버 테스트 (35개)
+│   └── tests/                   # 서버 테스트 (44개)
 └── simulator/                   # Three.js 웹 시뮬레이터
     ├── index.html               # 메인 HTML (탭 기반 CAE UI)
     └── src/
@@ -244,11 +265,15 @@ src/
 
 ```
 클라이언트 → 서버:
-  {"type": "segment",        "data": SegmentationRequest}   # 세그멘테이션 실행
-  {"type": "extract_meshes", "data": MeshExtractRequest}    # 3D 메쉬 추출
-  {"type": "auto_material",  "data": AutoMaterialRequest}   # 자동 재료 매핑
-  {"type": "run_analysis",   "data": AnalysisRequest}       # FEA 해석 실행
-  {"type": "ping"}                                          # 연결 확인
+  {"type": "segment",             "data": SegmentationRequest}   # 세그멘테이션 실행
+  {"type": "extract_meshes",      "data": MeshExtractRequest}    # 3D 메쉬 추출
+  {"type": "auto_material",       "data": AutoMaterialRequest}   # 자동 재료 매핑
+  {"type": "run_analysis",        "data": AnalysisRequest}       # FEA 해석 실행
+  {"type": "run_dicom_pipeline",  "data": DicomPipelineRequest}  # DICOM 원클릭 자동화
+  {"type": "ping"}                                               # 연결 확인
+
+REST 엔드포인트:
+  POST /api/upload_dicom   files: List[UploadFile]  # DICOM 다중 파일 업로드
 
 서버 → 클라이언트:
   {"type": "progress",         "data": {"step": "init|setup|bc|solving|done", ...}}
@@ -256,6 +281,8 @@ src/
   {"type": "meshes_result",    "data": {meshes: [{vertices, faces, color}]}}
   {"type": "material_result",  "data": {materials: [{name, E, nu, density}]}}
   {"type": "result",           "data": {displacements, stress, damage, info}}
+  {"type": "pipeline_step",    "data": {step, message, phase}}   # DICOM 파이프라인 진행률
+  {"type": "pipeline_result",  "data": {meshes, patient_info}}   # DICOM 파이프라인 최종 결과
   {"type": "error",            "data": {"message": "..."}}
 ```
 

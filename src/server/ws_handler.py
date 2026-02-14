@@ -210,16 +210,34 @@ async def _handle_dicom_pipeline(ws: WebSocket, data: dict):
             **convert_result,
         })
 
-        # 2단계: 세그멘테이션
-        await send_step("segmentation", {"message": "세그멘테이션 시작...", "phase": 2})
+        # 2단계: 세그멘테이션 (modality 자동 감지)
+        patient_info = convert_result.get("patient_info", {})
+        dicom_modality = patient_info.get("modality", "").upper().strip()
+
+        # DICOM modality → 엔진/modality 자동 선택
+        engine = request.engine
+        modality = request.modality
+        if engine == "auto":
+            if dicom_modality == "MR":
+                engine = "totalspineseg"
+                modality = modality or "mri"
+            else:
+                # CT 또는 감지 실패 시 기본값
+                engine = "totalseg"
+                modality = modality or "ct"
+
+        await send_step("segmentation", {
+            "message": f"세그멘테이션 시작 (엔진: {engine}, modality: {dicom_modality or 'unknown'})...",
+            "phase": 2,
+        })
 
         from .segmentation_pipeline import run_segmentation
         seg_request = SegmentationRequest(
             input_path=nifti_path,
-            engine=request.engine,
+            engine=engine,
             device=request.device,
             fast=request.fast,
-            modality=request.modality,
+            modality=modality,
         )
         seg_result = await loop.run_in_executor(
             None,
