@@ -36,6 +36,8 @@ class ContactDefinition:
     gap_tolerance: float = 0.0
     surface_a: Optional[np.ndarray] = field(default=None, repr=False)
     surface_b: Optional[np.ndarray] = field(default=None, repr=False)
+    static_friction: float = 0.0   # 정적 마찰 계수 (0이면 마찰 없음)
+    dynamic_friction: float = 0.0  # 동적 마찰 계수 (0이면 static과 동일)
 
 
 class NodeNodeContact:
@@ -170,5 +172,114 @@ class NodeNodeContact:
         # 작용-반작용
         np.add.at(forces_a, idx_a, f_vec)
         np.add.at(forces_b, idx_b, -f_vec)
+
+        return forces_a, forces_b
+
+    def compute_forces_with_friction(
+        self,
+        pos_a: np.ndarray,
+        pos_b: np.ndarray,
+        pairs: np.ndarray,
+        gaps: np.ndarray,
+        penalty: float,
+        gap_tol: float,
+        vel_a: np.ndarray,
+        vel_b: np.ndarray,
+        static_friction: float,
+        dynamic_friction: float,
+        dt: float,
+    ) -> Tuple[np.ndarray, np.ndarray]:
+        """페널티 접촉력 + Coulomb 마찰력 계산.
+
+        법선력은 기존과 동일하게 계산하고,
+        접선 방향으로 penalty-regularized Coulomb 마찰력을 추가한다.
+
+        Stick 조건: |f_t_trial| ≤ μ_s × |f_n| → f_t = f_t_trial
+        Slip 조건: |f_t_trial| > μ_s × |f_n| → f_t = μ_d × |f_n| × direction
+
+        Args:
+            pos_a, pos_b: 물체 좌표
+            pairs, gaps: 접촉 쌍과 거리
+            penalty: 페널티 강성
+            gap_tol: 접촉 감지 거리
+            vel_a, vel_b: 물체 속도 (n, dim)
+            static_friction: 정적 마찰 계수
+            dynamic_friction: 동적 마찰 계수
+            dt: 시간 간격
+
+        Returns:
+            forces_a, forces_b: 법선 + 접선 합산 접촉력
+        """
+        dim = pos_a.shape[1]
+        forces_a = np.zeros_like(pos_a)
+        forces_b = np.zeros_like(pos_b)
+
+        if len(pairs) == 0:
+            return forces_a, forces_b
+
+        idx_a = pairs[:, 0]
+        idx_b = pairs[:, 1]
+
+        # 관통 깊이
+        penetration = gap_tol - gaps
+
+        # 법선 방향
+        diff = pos_a[idx_a] - pos_b[idx_b]
+        norms = np.linalg.norm(diff, axis=1, keepdims=True)
+        norms = np.maximum(norms, 1e-15)
+        normals = diff / norms
+
+        # 법선 접촉력
+        f_n_mag = penalty * penetration
+        f_n_vec = f_n_mag[:, np.newaxis] * normals
+
+        # 상대 속도
+        v_rel = vel_a[idx_a] - vel_b[idx_b]
+
+        # 법선 방향 상대 속도
+        v_rel_n = np.sum(v_rel * normals, axis=1, keepdims=True)
+
+        # 접선 방향 상대 속도
+        v_t = v_rel - v_rel_n * normals
+
+        # 시도 마찰력: penalty 기반 접선력
+        v_t_mag = np.linalg.norm(v_t, axis=1, keepdims=True)
+        v_t_mag = np.maximum(v_t_mag, 1e-30)
+
+        # 접선 페널티로 시도 마찰력 계산
+        f_t_trial = penalty * v_t * dt
+
+        f_t_trial_mag = np.linalg.norm(f_t_trial, axis=1)
+
+        # Coulomb 제한
+        f_n_abs = np.abs(f_n_mag)
+        coulomb_limit = static_friction * f_n_abs
+
+        # Stick/Slip 분류
+        is_slip = f_t_trial_mag > coulomb_limit
+        is_stick = ~is_slip
+
+        # 마찰력 계산
+        f_t_vec = np.zeros_like(f_t_trial)
+
+        # Stick: 시도 마찰력 그대로
+        if np.any(is_stick):
+            f_t_vec[is_stick] = f_t_trial[is_stick]
+
+        # Slip: 동적 마찰 × |f_n| × 방향
+        if np.any(is_slip):
+            slip_dir = f_t_trial[is_slip] / (
+                f_t_trial_mag[is_slip, np.newaxis] + 1e-30
+            )
+            f_t_vec[is_slip] = (
+                dynamic_friction * f_n_abs[is_slip, np.newaxis] * slip_dir
+            )
+
+        # 총 접촉력 = 법선 + 접선
+        f_total = f_n_vec + f_t_vec
+
+        # 작용-반작용
+        np.add.at(forces_a, idx_a, f_total)
+        np.add.at(forces_b, idx_b, -f_total)
 
         return forces_a, forces_b

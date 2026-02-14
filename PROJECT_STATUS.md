@@ -166,6 +166,8 @@ DICOM 폴더 ──→ [0] DICOM→NIfTI 변환 ──→ [1] 세그멘테이션
 | **GPU 가속** | 자동 감지: CUDA → Vulkan → CPU 폴백 |
 | **정밀도** | 전체 f64 (배정밀도) 통일 |
 | **다중 물체** | Scene API: 이종 솔버 간 접촉 해석 (노드-노드 페널티, KDTree 기반) |
+| **강체** | RigidBody + PrescribedMotion: 규정 운동(회전/병진) 강체, 나사/임플란트 시뮬레이션 |
+| **마찰 접촉** | Coulomb 마찰: penalty-regularized stick/slip, 정적/동적 마찰 계수 |
 | **진행률** | WebSocket 콜백: init → setup → bc → material → solving → postprocess → done |
 | **핵심 API** | `init()` → `create_domain(Method.FEM|PD|SPG, ...)` → `Solver(domain, material).solve()` |
 | **핵심 파일** | `src/server/analysis_pipeline.py`, `src/fea/framework/{runtime.py, domain.py, solver.py, scene.py}` |
@@ -817,6 +819,34 @@ REST 엔드포인트:
    - 원인: OrbitControls가 `pointerdown`에서 `preventDefault()` 호출 → `mousedown` 이벤트 차단
    - 수정: 이벤트 리스너를 `mousedown/move/up` → `pointerdown/move/up`으로 변경
 
+## 작업 내역 (2026-02-15)
+
+### 완료
+
+0. **강체(Rigid Body) + Coulomb 마찰 접촉 구현** - `src/fea/framework/`
+   - Wu et al. (2026, JMBBM) 논문 기반 나사 삽입/pullout 시뮬레이션 준비
+   - **신규 파일:**
+     - `rigid_body.py`: RigidBody, PrescribedMotion, create_rigid_body
+     - `_adapters/rigid_adapter.py`: RigidBodyAdapter (AdapterBase 구현, 리액션 힘 기록)
+     - `tests/test_rigid_body.py`: 단위 24개 + 통합 2개 = 26개 테스트
+     - `tests/test_friction.py`: 마찰 8개 테스트
+   - **수정 파일:**
+     - `domain.py`: Method.RIGID enum 추가
+     - `contact.py`: ContactDefinition에 static_friction/dynamic_friction 필드, compute_forces_with_friction() (penalty-regularized Coulomb)
+     - `scene.py`: add() material Optional, _build() RIGID 분기, quasi_static/explicit에서 rigid body 처리, 마찰 접촉 분기, _get_velocity() 헬퍼
+     - `__init__.py`: RigidBody, PrescribedMotion, create_rigid_body export
+   - **강체 기능:**
+     - 규정 운동: 회전(Rodrigues) + 병진, 순차 적용
+     - 2D/3D 지원, Duck typing으로 Scene 호환
+     - 리액션 힘 기록 (pullout force 측정용)
+   - **Coulomb 마찰:**
+     - Penalty-regularized stick/slip 분류
+     - |f_t| ≤ μ_s × |f_n| (stick), f_t = μ_d × |f_n| × dir (slip)
+     - 작용-반작용 보존 확인됨
+   - **테스트: 32개 신규, 70개 전체 프레임워크 통과**
+
+---
+
 ## 이전 작업 내역 (2026-02-08)
 
 ### 완료
@@ -1155,10 +1185,11 @@ src/
 ├── core/                      # 핵심 데이터 구조 (Python)
 └── fea/                       # 유한요소 해석 (Python)
     ├── framework/             # 통합 API (FEM/PD/SPG 전환, GPU 감지, 접촉 해석)
-    │   ├── _adapters/        # FEM, PD, SPG 어댑터 + base_adapter.py
-    │   ├── contact.py        # 접촉 알고리즘 (노드-노드 페널티)
+    │   ├── _adapters/        # FEM, PD, SPG, Rigid 어댑터 + base_adapter.py
+    │   ├── rigid_body.py     # 강체(RigidBody) + 규정 운동(PrescribedMotion)
+    │   ├── contact.py        # 접촉 알고리즘 (노드-노드 페널티 + Coulomb 마찰)
     │   ├── scene.py          # 다중 물체 Scene + 접촉 솔버
-    │   └── tests/            # 통합 테스트 (19개) + 접촉 테스트 (15개)
+    │   └── tests/            # 통합 테스트 (19개) + 접촉 테스트 (15개) + 강체/마찰 (32개)
     ├── fem/                   # FEM 모듈
     ├── peridynamics/          # NOSB-PD 모듈
     ├── spg/                   # SPG 모듈 (극한 변형/파괴)

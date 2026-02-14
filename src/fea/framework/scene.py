@@ -20,12 +20,12 @@ class Body:
     """장면 내 물체.
 
     Args:
-        domain: 통합 Domain 객체
-        material: 통합 Material 객체
+        domain: 통합 Domain 또는 RigidBody 객체
+        material: 통합 Material 객체 (강체는 None)
         options: 솔버 추가 옵션
     """
-    domain: Domain
-    material: Material
+    domain: object  # Domain 또는 RigidBody
+    material: Optional[Material] = None
     options: dict = field(default_factory=dict)
     adapter: Optional[object] = field(default=None, repr=False)
     _index: int = -1
@@ -51,12 +51,17 @@ class Scene:
         self._domain_to_body: Dict[int, Body] = {}  # id(domain) → Body
         self._built = False
 
-    def add(self, domain: Domain, material: Material, **options) -> Body:
+    def add(
+        self,
+        domain,
+        material: Optional[Material] = None,
+        **options,
+    ) -> Body:
         """물체 추가.
 
         Args:
-            domain: 통합 Domain 객체
-            material: 통합 Material 객체
+            domain: 통합 Domain 또는 RigidBody 객체
+            material: 통합 Material 객체 (강체는 None 가능)
             **options: 솔버별 추가 옵션
 
         Returns:
@@ -70,29 +75,37 @@ class Scene:
 
     def add_contact(
         self,
-        domain_a: Domain,
-        domain_b: Domain,
+        domain_a,
+        domain_b,
         method: ContactType = ContactType.PENALTY,
         penalty: Optional[float] = None,
         gap_tolerance: Optional[float] = None,
         surface_a: Optional[np.ndarray] = None,
         surface_b: Optional[np.ndarray] = None,
+        static_friction: float = 0.0,
+        dynamic_friction: float = 0.0,
     ):
         """접촉 조건 추가.
 
         Args:
-            domain_a: 물체 A의 Domain
-            domain_b: 물체 B의 Domain
+            domain_a: 물체 A의 Domain 또는 RigidBody
+            domain_b: 물체 B의 Domain 또는 RigidBody
             method: 접촉 유형
             penalty: 페널티 강성 (None이면 자동 추정)
             gap_tolerance: 접촉 감지 거리 (None이면 자동 추정)
             surface_a: A 접촉면 인덱스 (None이면 전체 경계)
             surface_b: B 접촉면 인덱스 (None이면 전체 경계)
+            static_friction: 정적 마찰 계수 (0이면 마찰 없음)
+            dynamic_friction: 동적 마찰 계수 (0이면 static_friction 사용)
         """
         body_a = self._domain_to_body.get(id(domain_a))
         body_b = self._domain_to_body.get(id(domain_b))
         if body_a is None or body_b is None:
             raise ValueError("접촉 정의에 사용된 도메인이 Scene에 추가되지 않음")
+
+        # dynamic_friction 기본값: static_friction과 동일
+        if dynamic_friction == 0.0 and static_friction > 0.0:
+            dynamic_friction = static_friction
 
         contact_def = ContactDefinition(
             body_idx_a=body_a._index,
@@ -102,6 +115,8 @@ class Scene:
             gap_tolerance=gap_tolerance if gap_tolerance is not None else 0.0,
             surface_a=surface_a,
             surface_b=surface_b,
+            static_friction=static_friction,
+            dynamic_friction=dynamic_friction,
         )
         # penalty/gap_tolerance 자동 추정을 위해 flag 저장
         contact_def._auto_penalty = (penalty is None)
@@ -125,6 +140,9 @@ class Scene:
             elif method == Method.SPG:
                 from ._adapters.spg_adapter import SPGAdapter
                 body.adapter = SPGAdapter(body.domain, body.material, **body.options)
+            elif method == Method.RIGID:
+                from ._adapters.rigid_adapter import RigidBodyAdapter
+                body.adapter = RigidBodyAdapter(body.domain, **body.options)
             else:
                 raise ValueError(f"지원하지 않는 해석 방법: {method}")
             body.domain._adapter = body.adapter
@@ -148,14 +166,21 @@ class Scene:
                 cdef.gap_tolerance = max(spacing_a, spacing_b) * 1.5
 
             if cdef._auto_penalty:
-                E_avg = (body_a.material.E + body_b.material.E) / 2
+                # 강체(material=None)는 상대 물체의 E 사용
+                E_a = body_a.material.E if body_a.material is not None else 0.0
+                E_b = body_b.material.E if body_b.material is not None else 0.0
+                E_avg = max(E_a, E_b) if (E_a == 0.0 or E_b == 0.0) else (E_a + E_b) / 2
                 char_length = min(spacing_a, spacing_b)
-                cdef.penalty = E_avg / char_length
+                cdef.penalty = E_avg / char_length if char_length > 0 else 1e6
 
         self._built = True
 
     def _detect_boundary(self, body: Body) -> np.ndarray:
         """도메인 외곽 노드/입자 인덱스 자동 감지."""
+        # 강체는 전체 표면이 경계
+        if body.domain.method == Method.RIGID:
+            return body.domain.select_boundary()
+
         pos = body.domain.get_positions()
         dim = body.domain.dim
 
@@ -177,7 +202,16 @@ class Scene:
 
     def _estimate_spacing(self, body: Body) -> float:
         """물체의 평균 노드/입자 간격 추정."""
-        pos = body.domain.get_positions()
+        # 강체: 최근접 이웃 평균 거리로 추정
+        if body.domain.method == Method.RIGID:
+            pos = body.domain.get_positions()
+            if len(pos) < 2:
+                return 1.0
+            from scipy.spatial import cKDTree
+            tree = cKDTree(pos)
+            dists, _ = tree.query(pos, k=2)
+            return float(np.mean(dists[:, 1]))
+
         n_div = body.domain.n_divisions
         size = body.domain.size
 
@@ -262,10 +296,23 @@ class Scene:
             if len(pairs) == 0:
                 continue
 
-            forces_a, forces_b = contact_algo.compute_forces(
-                pos_a, pos_b, pairs, gaps,
-                cdef.penalty, cdef.gap_tolerance,
-            )
+            # 마찰 계수가 있으면 마찰력 포함 계산
+            if cdef.static_friction > 0.0:
+                vel_a = self._get_velocity(body_a)
+                vel_b = self._get_velocity(body_b)
+                forces_a, forces_b = contact_algo.compute_forces_with_friction(
+                    pos_a, pos_b, pairs, gaps,
+                    cdef.penalty, cdef.gap_tolerance,
+                    vel_a=vel_a, vel_b=vel_b,
+                    static_friction=cdef.static_friction,
+                    dynamic_friction=cdef.dynamic_friction,
+                    dt=self._current_dt if hasattr(self, '_current_dt') else 1e-6,
+                )
+            else:
+                forces_a, forces_b = contact_algo.compute_forces(
+                    pos_a, pos_b, pairs, gaps,
+                    cdef.penalty, cdef.gap_tolerance,
+                )
 
             active_a = np.where(np.any(forces_a != 0, axis=1))[0]
             active_b = np.where(np.any(forces_b != 0, axis=1))[0]
@@ -300,19 +347,25 @@ class Scene:
         t0 = time.time()
         contact_algo = NodeNodeContact()
 
-        # 명시적 body와 정적 body 분리
+        # body 분류: 명시적(SPG/PD), 정적(FEM), 강체(RIGID)
         explicit_bodies = []
         static_bodies = []
+        rigid_bodies = []
         for body in self._bodies:
-            if body.domain.method == Method.FEM:
+            if body.domain.method == Method.RIGID:
+                rigid_bodies.append(body)
+            elif body.domain.method == Method.FEM:
                 static_bodies.append(body)
             else:
                 explicit_bodies.append(body)
 
-        # dt 결정 (명시적 body만)
+        # dt 결정 (명시적 body만, 강체 제외)
         if explicit_bodies:
             safety = kwargs.get("dt_safety", 0.5)
             dt = min(b.adapter.get_stable_dt() for b in explicit_bodies) * safety
+        elif rigid_bodies and not static_bodies:
+            # 강체만 있으면 (접촉 대상이 없으므로) 임의 dt
+            dt = 1e-4
         else:
             # FEM만 있으면 Staggered 정적으로 위임
             return self._solve_static(
@@ -321,6 +374,9 @@ class Scene:
                 verbose=verbose,
                 **kwargs,
             )
+
+        # 현재 dt 저장 (마찰 계산에서 사용)
+        self._current_dt = dt
 
         # FEM re-solve 주기 (매 N 스텝마다)
         fem_update_interval = kwargs.get("fem_update_interval", 500)
@@ -337,8 +393,12 @@ class Scene:
         ke_increasing_count = 0
 
         for step_i in range(max_iterations):
-            # 모든 명시적 body 1스텝 전진
+            # 명시적 body 1스텝 전진
             for body in explicit_bodies:
+                body.adapter.step(dt)
+
+            # 강체 1스텝 전진 (규정 운동)
+            for body in rigid_bodies:
                 body.adapter.step(dt)
 
             # 접촉력 갱신
@@ -403,16 +463,54 @@ class Scene:
 
     def _get_kinetic_energy(self, body: Body) -> float:
         """body의 운동에너지 추출."""
+        # 강체는 KE 없음 (규정 운동이므로 수렴 판정 불필요)
+        if body.domain.method == Method.RIGID:
+            return 0.0
         adapter = body.adapter
         # SPG/PD 솔버의 내부 KE 가져오기
         if hasattr(adapter, 'solver') and hasattr(adapter.solver, 'prev_ke'):
             return float(adapter.solver.prev_ke)
         return 0.0
 
+    def _get_velocity(self, body: Body) -> np.ndarray:
+        """body의 속도장 추출 (마찰 계산용)."""
+        adapter = body.adapter
+        # SPG/PD: 내부 속도 필드 사용
+        if hasattr(adapter, 'ps') and hasattr(adapter.ps, 'v'):
+            return adapter.ps.v.to_numpy()
+        # 강체: 규정 운동 속도 근사 (변위 차이 / dt)
+        if body.domain.method == Method.RIGID:
+            # 강체 속도를 motion에서 추정
+            rb = body.domain
+            if rb.motions and rb._motion_idx < len(rb.motions):
+                motion = rb.motions[rb._motion_idx]
+                n = rb.n_points
+                vel = np.zeros((n, rb.dim), dtype=np.float64)
+                if motion.motion_type == "translation":
+                    vel[:] = motion.axis[:rb.dim] * motion.rate
+                # 회전은 각 점마다 다르므로 선속도 = ω × r
+                elif motion.motion_type == "rotation":
+                    if rb.dim == 2:
+                        r = rb._current_positions - motion.center[:2]
+                        # v = ω × r (2D: v_x = -ω*r_y, v_y = ω*r_x)
+                        vel[:, 0] = -motion.rate * r[:, 1]
+                        vel[:, 1] = motion.rate * r[:, 0]
+                    else:
+                        r = rb._current_positions - motion.center[:3]
+                        vel = np.cross(motion.axis * motion.rate, r)
+                return vel
+            return np.zeros((rb.n_points, rb.dim), dtype=np.float64)
+        # FEM: 정적이므로 속도 0
+        pos = adapter.get_current_positions()
+        return np.zeros_like(pos)
+
     def _estimate_reference_energy(self) -> float:
         """외력 기반 기준 에너지 추정 (수렴 판정용)."""
         ref = 0.0
         for body in self._bodies:
+            # 강체는 외력/재료 에너지 기여 없음
+            if body.material is None:
+                continue
             domain = body.domain
             if domain._force_indices is not None and domain._force_values is not None:
                 forces = domain._force_values
@@ -515,15 +613,16 @@ class Scene:
         t0 = time.time()
         contact_algo = NodeNodeContact()
 
-        # 공통 dt 결정 (명시적 body만, FEM은 제외)
+        # 공통 dt 결정 (명시적 body만, FEM/RIGID 제외)
         explicit_dts = [
             b.adapter.get_stable_dt() for b in self._bodies
-            if b.domain.method != Method.FEM
+            if b.domain.method not in (Method.FEM, Method.RIGID)
         ]
         if not explicit_dts:
             explicit_dts = [1e-6]  # FEM만 있으면 임의 dt
         safety = kwargs.get("dt_safety", 0.8)
         dt = min(explicit_dts) * safety
+        self._current_dt = dt
 
         total_contact_force = 0.0
         for step_i in range(n_steps):

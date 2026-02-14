@@ -13,6 +13,7 @@ class Method(enum.Enum):
     FEM = "fem"
     PD = "pd"
     SPG = "spg"
+    RIGID = "rigid"
 
 
 class Domain:

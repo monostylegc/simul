@@ -40,6 +40,7 @@ from .solver import Solver
 from .result import SolveResult
 from .contact import ContactType
 from .scene import Scene
+from .rigid_body import RigidBody, PrescribedMotion, create_rigid_body
 
 __all__ = [
     "init",
@@ -55,4 +56,7 @@ __all__ = [
     "SolveResult",
     "ContactType",
     "Scene",
+    "RigidBody",
+    "PrescribedMotion",
+    "create_rigid_body",
 ]
