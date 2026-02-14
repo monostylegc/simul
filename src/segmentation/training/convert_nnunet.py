@@ -117,8 +117,8 @@ def generate_dataset_json(
     if config is None:
         config = NnunetConfig()
 
-    # 라벨 이름 생성
-    label_names = {"0": "background"}
+    # 라벨 이름 생성 (nnU-Net v2 형식: {"name": id, ...})
+    label_names = {"background": 0}
     for nn_id in range(1, config.num_classes):
         from src.segmentation.labels import NNUNET_SPINE_TO_STANDARD
         std_val = NNUNET_SPINE_TO_STANDARD.get(nn_id)
@@ -129,7 +129,7 @@ def generate_dataset_json(
                 name = f"class_{nn_id}"
         else:
             name = f"class_{nn_id}"
-        label_names[str(nn_id)] = name
+        label_names[name] = nn_id
 
     dataset_info = {
         "channel_names": config.channel_names,
