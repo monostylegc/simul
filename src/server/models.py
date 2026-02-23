@@ -11,13 +11,26 @@ class BoundaryCondition(BaseModel):
     values: list[list[float]]  # (n, dim) 변위 또는 힘 벡터
 
 
+class RegionBC(BaseModel):
+    """영역별 경계조건 — FEM 노드 또는 PD/SPG 입자에 적용."""
+    type: Literal["fixed", "force"]
+    node_indices: list[int]
+    values: list[list[float]]
+
+
 class MaterialRegion(BaseModel):
-    """재료 영역 — 특정 노드 그룹에 할당되는 물성."""
+    """재료 영역 — 특정 노드 그룹에 할당되는 물성 + 솔버."""
     name: str                  # "bone", "disc", "ligament"
+    method: Literal["fem", "pd", "spg"] = "fem"  # 영역별 솔버 지정
     E: float                   # Young's modulus [Pa]
     nu: float                  # Poisson ratio
     density: float = 1000.0
-    node_indices: list[int]    # 이 재료에 속하는 노드
+    node_indices: list[int]    # PD/SPG: 이 재료에 속하는 입자 인덱스
+    # FEM 전용: 볼륨 메쉬 데이터
+    nodes: Optional[list[list[float]]] = None      # (n_nodes, 3) HEX8 노드 좌표
+    elements: Optional[list[list[int]]] = None      # (n_elements, 8) HEX8 연결정보
+    # 영역별 경계조건
+    boundary_conditions: Optional[list[RegionBC]] = None
 
 
 class AnalysisRequest(BaseModel):

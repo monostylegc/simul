@@ -1,6 +1,6 @@
 # Spine Surgery Planner — 프로젝트 목표 및 워크플로우
 
-최종 업데이트: 2026-02-15
+최종 업데이트: 2026-02-23
 
 ---
 
@@ -332,9 +332,43 @@ REST 엔드포인트:
 
 # 프로젝트 진행 상황
 
-최종 업데이트: 2026-02-15
+최종 업데이트: 2026-02-24
 
-## 오늘 작업 내역 (2026-02-14)
+## 오늘 작업 내역 (2026-02-24)
+
+### 완료
+
+1. **FEM 볼륨 메쉬 파이프라인 구현 — 복셀 → HEX8 직접 변환**
+
+   핵심 개선: FEM 해석 시 복셀 그리드에서 HEX8 볼륨 메쉬를 직접 생성하여 FEMesh에 전달.
+   PD/SPG는 기존대로 포인트 클라우드 사용. 결과 시각화도 솔버 타입별로 분리.
+
+   - **PreProcessor.ts**: `buildFEMMesh()` 메서드 추가
+     - 채워진 복셀 1개 = HEX8 요소 1개
+     - 인접 복셀 간 코너 노드 공유 (compact 번호 부여)
+     - BC 매핑: FEM → 8개 코너 노드, PD/SPG → 입자 인덱스
+   - **models.py**: `MaterialRegion`에 `nodes`, `elements`, `boundary_conditions` 필드 추가
+   - **analysis_pipeline.py**: 완전 재작성
+     - `_run_fem_region()`: FEMesh.initialize_from_numpy(nodes, elements) 직접 사용
+     - `_run_particle_region()`: PD/SPG 입자 기반 도메인
+     - 결과: `fem_regions[]`, `particle_regions[]` 구조화된 영역별 결과
+   - **PostProcessor.ts**: FEM + 포인트 혼합 시각화
+     - FEM: HEX8 표면 추출 → THREE.Mesh (vertex colors + Phong lighting)
+     - PD/SPG: THREE.Points (포인트 클라우드)
+     - extractSurfaceTriangles(): 내부 면 제거, 외부 면만 삼각형화
+   - **ws/types.ts**: `FEMRegionResult`, `ParticleRegionResult` 타입 추가
+
+   **수정 파일 (6개)**:
+   - `src/frontend/src/lib/analysis/PreProcessor.ts` — HEX8 메쉬 생성 + 영역별 BC
+   - `src/frontend/src/lib/analysis/PostProcessor.ts` — 메쉬 표면 + 포인트 시각화
+   - `src/frontend/src/lib/ws/types.ts` — FEM/입자 영역 결과 타입
+   - `src/frontend/src/lib/actions/analysis.ts` — FEM 전용 요청 처리
+   - `src/server/models.py` — MaterialRegion FEM 필드
+   - `src/server/analysis_pipeline.py` — 영역별 FEM/PD/SPG 분리 실행
+
+---
+
+## 이전 작업 내역 (2026-02-14)
 
 ### 완료
 
@@ -1246,6 +1280,159 @@ cd src/fea/visualization && python -m http.server 8081
 
 # STL 구조해석 테스트
 uv run python test_stl_fea.py
+
+# Svelte 5 프론트엔드 개발 서버
+cd src/frontend && npm run dev
+# 브라우저: http://localhost:5174
+
+# Svelte 프론트엔드 빌드 (→ src/simulator/dist/)
+cd src/frontend && npm run build
+```
+
+---
+
+## 프론트엔드 마이그레이션 (Svelte 5 + Vite + TypeScript) — ✅ 완료
+
+기존 vanilla HTML/JS + Three.js r128 (CDN) 프론트엔드를 **Svelte 5 + Vite + Three.js r170+ + TypeScript** SPA로 전면 마이그레이션 완료.
+
+### 마이그레이션 범위
+
+| Phase | 내용 | 상태 |
+|-------|------|------|
+| **Phase 1** | 프로젝트 스캐폴딩 (Svelte 5 + Vite + Three.js r170) | ✅ |
+| **Phase 2** | 핵심 로직 마이그레이션 (VoxelGrid, NRRDLoader, colormap) | ✅ |
+| **Phase 3** | WS/해석 로직 (WSClient, PreProcessor, PostProcessor, ImplantManager) | ✅ |
+| **Phase 4** | Svelte 5 runes 스토어 7개 + 액션 모듈 4개 | ✅ |
+| **Phase 5** | UI 컴포넌트 (공통 5개 + Colorbar + 사이드바 패널 6개) | ✅ |
+| **Phase 6** | 이벤트 핸들러 (포인터, 키보드 Ctrl+Z/Y, 드래그앤드롭) | ✅ |
+| **Phase 7** | 프로덕션 빌드 + 통합 테스트 | ✅ |
+
+### 신규 기술 스택
+
+- **Svelte 5**: `$state`, `$derived`, `$bindable` runes 기반 반응형 상태
+- **Vite 6**: HMR, `$lib` alias, proxy (`/ws` → 8000, `/api` → 8000)
+- **Three.js r170+**: ES module import (`three/addons/...`), `SRGBColorSpace`
+- **TypeScript strict**: 전체 코드 타입 안전성 보장
+
+### 파일 구조 (`src/frontend/`)
+
+```
+src/frontend/
+├── src/
+│   ├── main.ts                    # Svelte 5 mount
+│   ├── App.svelte                 # 루트 레이아웃
+│   ├── app.css                    # CSS 변수, 전역 스타일
+│   ├── components/
+│   │   ├── Canvas3D.svelte        # Three.js + 포인터/키보드 이벤트
+│   │   ├── Menubar.svelte         # 탭 바 + Undo/Redo
+│   │   ├── Statusbar.svelte       # 상태바 (FPS, 모델 수, 정점/면)
+│   │   ├── Colorbar.svelte        # Jet 컬러맵 시각화
+│   │   ├── common/                # 공통 컴포넌트 (Slider, ToolButton 등)
+│   │   └── sidebar/
+│   │       ├── Sidebar.svelte     # 탭 기반 패널 전환
+│   │       ├── FilePanel.svelte   # 모델 목록, STL/NRRD 로드
+│   │       ├── ModelingPanel.svelte # 드릴, Undo/Redo
+│   │       ├── PreProcessPanel.svelte # BC, 재료 할당
+│   │       ├── SolvePanel.svelte  # 솔버 선택, 해석 실행
+│   │       ├── PostProcessPanel.svelte # 결과 시각화
+│   │       └── ViewPanel.svelte   # 카메라, 배경, 헬퍼
+│   └── lib/
+│       ├── three/
+│       │   ├── SceneManager.ts    # Three.js 씬 관리
+│       │   ├── VoxelGrid.ts       # 복셀 시스템 + Marching Cubes
+│       │   ├── NRRDLoader.ts      # NRRD 파서
+│       │   └── ImplantManager.ts  # 임플란트 TransformControls
+│       ├── analysis/
+│       │   ├── colormap.ts        # Jet 컬러맵
+│       │   ├── PreProcessor.ts    # 면선택, BC, 재료, 해석 요청 조립
+│       │   └── PostProcessor.ts   # 결과 시각화 (변위/응력/손상)
+│       ├── ws/
+│       │   ├── types.ts           # WS 메시지 타입 정의
+│       │   └── client.ts          # WebSocket 클라이언트
+│       ├── stores/                # Svelte 5 runes 스토어
+│       │   ├── scene.svelte.ts    # 씬/모델 상태
+│       │   ├── ui.svelte.ts       # 탭/상태바
+│       │   ├── tools.svelte.ts    # 도구 상태 (드릴/브러쉬)
+│       │   ├── analysis.svelte.ts # 해석 상태
+│       │   ├── websocket.svelte.ts # WS 연결 상태
+│       │   ├── history.svelte.ts  # Undo/Redo
+│       │   └── pipeline.svelte.ts # DICOM 파이프라인
+│       └── actions/               # 비즈니스 로직 액션
+│           ├── loading.ts         # STL/NRRD 로드, 복셀 초기화
+│           ├── drilling.ts        # 드릴 프리뷰/실행
+│           ├── analysis.ts        # 해석 실행/결과 처리
+│           └── pipeline.ts        # DICOM 파이프라인
+├── public/stl/                    # 샘플 STL (L4, L5, disc)
+├── package.json
+├── vite.config.ts
+├── tsconfig.json
+└── svelte.config.js
+```
+
+### 빌드 결과
+
+- **app JS**: 182 KB (gzip 60 KB)
+- **Three.js**: 482 KB (gzip 122 KB) — 별도 청크 분리
+- **CSS**: 13.3 KB (gzip 2.7 KB)
+- **출력 경로**: `src/simulator/dist/` (FastAPI 정적 서빙 대응)
+- **경고/에러**: 0개
+
+### UX/워크플로우 개선 (2026-02-23)
+
+| 항목 | 내용 |
+|------|------|
+| **빌드 청크 분리** | Three.js를 별도 청크로 분리 (661KB 단일 → 182KB + 482KB) |
+| **a11y 라벨** | 모든 form input에 `for`/`id` 연결 (빌드 경고 0개) |
+| **토스트 알림** | 로드/삭제/BC 적용 등 비동기 결과를 토스트로 표시 |
+| **확인 다이얼로그** | Clear All, Clear All BC 등 파괴적 액션에 확인 필수 |
+| **유효성 체크리스트** | Solve 탭에 Models/BC/Material 체크리스트 표시 |
+| **솔버 설명** | FEM/PD/SPG 선택 시 한글 설명 표시 |
+| **로딩 상태** | FilePanel 로드 중 버튼 비활성화 + "Loading..." 표시 |
+| **에러 피드백** | 로드 실패 시 토스트 에러 알림 |
+| **History 연결** | voxelGrids ↔ historyState 자동 연결 |
+| **상태바 넘침 방지** | 긴 메시지 text-overflow: ellipsis 처리 |
+| **Force BC 방향 UI** | X/Y/Z 개별 입력 + 프리셋 버튼 (↓-Y, ↑+Y, →+X, ⊙+Z) |
+| **PostProcess 빈 상태** | 결과 없을 때 아이콘 + 안내 메시지 (기존 텍스트만 → 시각적 개선) |
+| **버튼 disabled** | 모델 없을 때 Brush/Apply BC/Assign Material 등 비활성화 |
+| **환경변수 지원** | `VITE_BACKEND_URL` 환경변수로 백엔드 URL 설정 가능 |
+| **Magnitude 범위** | Force BC 최대값 1000N → 2000N 확장 |
+| **Remove Last BC** | 마지막 BC만 제거하는 버튼 추가 |
+
+### 후처리 시각화 + 전처리 UI 대폭 개선 (2026-02-23)
+
+| 항목 | 내용 |
+|------|------|
+| **다중 컬러맵** | 6종 지원: Jet, Cool-to-Warm, Viridis, Grayscale, Rainbow, Turbo |
+| **컬러맵 선택 UI** | 그라디언트 칩 그리드로 시각적 선택 (클릭 한 번) |
+| **벡터 컴포넌트** | Magnitude / X / Y / Z 성분 별도 시각화 가능 |
+| **CSS 그라디언트** | `colormapToCSS()` — 컬러맵 프리뷰용 동적 CSS 생성 |
+| **데이터 범위 표시** | 현재 스칼라 필드의 min~max + 단위 표시 |
+| **불투명도 제어** | 결과 포인트의 투명도 조절 (0.1~1.0) |
+| **워프 범위 확장** | Warp by Vector 스케일 0~200 범위 |
+| **PostProcessor 확장** | 컴포넌트 추출, 커스텀 범위, 임계값 필터, 클리핑 평면 내부 지원 |
+| **통계 개선** | 입자 수, max 변위/응력/손상, 해석 방법 표시 |
+| **스토어 동기화** | `syncFromPostProcessor()` — PostProcessor ↔ Svelte 스토어 자동 동기화 |
+| **힘 크기 프리셋** | 50, 100, 200, 500, 1000 N 원클릭 버튼 |
+| **크기 직접 입력** | 슬라이더 + 숫자 입력 필드 동시 지원 (최대 10000N) |
+| **방향 6종 프리셋** | 압축/인장/측방/전방/굴곡/신전 (해부학적 한글 라벨) |
+| **X/Y/Z 색상 코딩** | 축별 색상 배지 (빨강=X, 초록=Y, 파랑=Z) |
+| **힘 벡터 미리보기** | `F = (0, -100, 0) N` 실시간 계산 표시 |
+| **방향 정규화** | 비정규 방향 벡터도 자동 정규화 처리 |
+
+### 모델별 멀티솔버 지정 (2026-02-24)
+
+| 항목 | 내용 |
+|------|------|
+| **모델별 솔버 지정** | 각 모델(L4/L5/disc)에 독립적으로 FEM/PD/SPG 할당 가능 |
+| **SolvePanel 테이블** | 모델명 + 솔버 + 재료를 한눈에 보는 그리드 UI |
+| **솔버 색상 코딩** | FEM=파랑, PD=빨강, SPG=주황 점/테두리로 시각 구분 |
+| **일괄 적용** | All FEM / All PD / All SPG 원클릭 버튼 |
+| **요약 표시** | Run Analysis 버튼에 `(FEM×2, PD×1)` 형태로 솔버 구성 표시 |
+| **solverAssignments** | `analysisState.solverAssignments` Record로 모델별 솔버 추적 |
+| **PreProcessor 연동** | `buildAnalysisRequest()` → 각 material에 `method` 필드 포함 |
+| **백엔드 멀티솔버** | `analysis_pipeline.py` — 영역별 그룹 분리 실행 후 결과 합성 |
+| **MaterialRegion.method** | Pydantic 모델에 `method` 필드 추가 (기본값 "fem") |
+| **솔버 설명** | FEM/PD/SPG 각각 한글 설명 + 색상 배지로 표시 |
 
 # NPZ → JSON 변환
 uv run python src/fea/visualization/convert_npz.py fea_result.npz output.json

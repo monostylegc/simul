@@ -1,0 +1,20 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git log:*)",
+      "mcp__Claude_Preview__preview_start",
+      "Bash(netstat:*)",
+      "Bash(taskkill:*)",
+      "Bash(uv run:*)",
+      "Bash(curl:*)",
+      "Bash(wc:*)",
+      "Bash(npx sv create:*)",
+      "Bash(npm install:*)",
+      "Bash(tasklist:*)",
+      "Bash(npx tsc:*)",
+      "Bash(npm run build:*)",
+      "Bash(npx vite build:*)",
+      "Bash(grep:*)"
+    ]
+  }
+}

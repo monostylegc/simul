@@ -1,0 +1,24 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "frontend",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["node_modules/vite/bin/vite.js"],
+      "cwd": "src/frontend",
+      "port": 5174
+    },
+    {
+      "name": "simulator",
+      "runtimeExecutable": "uv",
+      "runtimeArgs": ["run", "python", "-m", "http.server", "8080", "--directory", "src/simulator"],
+      "port": 8080
+    },
+    {
+      "name": "server",
+      "runtimeExecutable": "uv",
+      "runtimeArgs": ["run", "uvicorn", "src.server.app:app", "--host", "0.0.0.0", "--port", "8000", "--reload"],
+      "port": 8000
+    }
+  ]
+}
