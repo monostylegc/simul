@@ -1,7 +1,7 @@
 """자동 재료 매핑 테스트."""
 
 import pytest
-from src.server.auto_material import auto_assign_materials, SPINE_MATERIAL_DB
+from src.server.services.auto_material import auto_assign_materials, SPINE_MATERIAL_DB
 from src.server.models import AutoMaterialRequest
 
 

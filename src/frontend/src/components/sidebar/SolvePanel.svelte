@@ -12,36 +12,52 @@
   import { analysisState } from '$lib/stores/analysis.svelte';
   import { wsState } from '$lib/stores/websocket.svelte';
   import { uiState } from '$lib/stores/ui.svelte';
-  import { initAnalysis, runAnalysis, assignSolver, assignMaterial, setDefaultMethod } from '$lib/actions/analysis';
-  import { MATERIAL_PRESETS } from '$lib/analysis/PreProcessor';
+  import { initAnalysis, runAnalysis, cancelAnalysis, assignSolver, setDefaultMethod } from '$lib/actions/analysis';
+  import { formatE, constitutiveModelShort } from '$lib/stores/materials.svelte';
 
   type SolverType = 'fem' | 'pd' | 'spg';
 
-  /** 해석 가능 여부 */
+  /** 해석 가능 여부 (모델 + BC + 미실행 + 서버 연결) */
   let canRun = $derived(
-    sceneState.models.length > 0 && !analysisState.isRunning
+    sceneState.models.length > 0
+    && analysisState.bcCount > 0
+    && !analysisState.isRunning
+    && wsState.connected
   );
+
+  /** 검증 에러 목록 (Run 버튼 비활성화 사유 표시용) */
+  let validationErrors = $derived.by(() => {
+    const errs: string[] = [];
+    if (sceneState.models.length === 0) errs.push('모델 미로드');
+    if (analysisState.bcCount === 0) errs.push('경계조건(BC) 미설정');
+    if (!wsState.connected) errs.push('서버 미연결');
+    return errs;
+  });
 
   /** 모델별 솔버 가져오기 */
   function getModelSolver(name: string): SolverType {
     return analysisState.solverAssignments[name] || analysisState.method;
   }
 
-  /** 모델별 재료 가져오기 */
-  function getModelMaterial(name: string): string {
-    return analysisState.preProcessor?.materialAssignments[name] || 'bone';
+  /** 모델별 재료 라벨 (읽기 전용 — Material 탭에서 설정) */
+  function getModelMaterialLabel(name: string): string {
+    const mat = analysisState.preProcessor?.materialAssignments[name];
+    if (!mat) return '미할당';
+    return mat.label;
+  }
+
+  /** 모델별 재료 상세 (툴팁용) */
+  function getModelMaterialSummary(name: string): string {
+    const mat = analysisState.preProcessor?.materialAssignments[name];
+    if (!mat) return '재료 미할당 — Material 탭에서 설정';
+    const model = constitutiveModelShort(mat.constitutiveModel ?? 'linear_elastic');
+    return `${mat.label} [${model}] E=${formatE(mat.E)}, ν=${mat.nu}`;
   }
 
   /** 모델별 솔버 변경 */
   function handleSolverChange(name: string, e: Event) {
     const method = (e.target as HTMLSelectElement).value as SolverType;
     assignSolver(name, method);
-  }
-
-  /** 모델별 재료 변경 */
-  function handleMaterialChange(name: string, e: Event) {
-    const preset = (e.target as HTMLSelectElement).value;
-    assignMaterial(name, preset);
   }
 
   /** 전체 솔버 일괄 적용 */
@@ -53,8 +69,11 @@
 
   /** 해석 시작 */
   async function handleRun() {
-    if (sceneState.models.length === 0) {
-      uiState.toast('모델을 먼저 로드하세요 (File 탭)', 'warn');
+    // 검증 — canRun이 false이면 사유를 표시
+    if (!canRun) {
+      if (validationErrors.length > 0) {
+        uiState.toast(`해석 불가: ${validationErrors.join(', ')}`, 'error');
+      }
       return;
     }
 
@@ -65,13 +84,9 @@
       analysisState.preProcessor.solverAssignments = { ...analysisState.solverAssignments };
     }
 
-    if (!wsState.connected) {
-      uiState.toast('서버에 연결되지 않았습니다', 'error');
-      return;
-    }
-
-    if (analysisState.bcCount === 0) {
-      uiState.toast('경계조건(BC)이 설정되지 않았습니다', 'warn');
+    // 재료 미할당 경고 (기본값 bone으로 진행)
+    if (analysisState.materialCount === 0) {
+      uiState.toast('재료 미할당 — 기본 bone 재료 적용', 'warn');
     }
 
     await runAnalysis();
@@ -97,11 +112,6 @@
     pd:  '#e53935',
     spg: '#ff8f00',
   };
-
-  /** 재료 프리셋 옵션 */
-  const materialOptions = Object.entries(MATERIAL_PRESETS).map(([key, _p]) => ({
-    value: key, label: key,
-  }));
 
   /** 사용된 솔버 종류 요약 (solverAssignments 직접 참조로 반응성 보장) */
   let solverSummary = $derived(() => {
@@ -135,6 +145,9 @@
   <!-- 체크리스트 -->
   <div class="section">
     <div class="section-title">Checklist</div>
+    <div class="check-item" class:ok={wsState.connected}>
+      {wsState.connected ? '✓' : '✗'} Server Connected
+    </div>
     <div class="check-item" class:ok={sceneState.models.length > 0}>
       {sceneState.models.length > 0 ? '✓' : '✗'} Models: {sceneState.models.length}
     </div>
@@ -143,8 +156,20 @@
     </div>
     <div class="check-item" class:ok={analysisState.materialCount > 0}>
       {analysisState.materialCount > 0 ? '✓' : '—'} Materials: {analysisState.materialCount}
+      {#if analysisState.materialCount === 0}
+        <span class="hint">(기본: bone)</span>
+      {/if}
     </div>
   </div>
+
+  <!-- 검증 에러 메시지 -->
+  {#if validationErrors.length > 0 && !analysisState.isRunning}
+    <div class="validation-errors">
+      {#each validationErrors as err}
+        <div class="validation-item">⚠ {err}</div>
+      {/each}
+    </div>
+  {/if}
 
   <!-- 모델별 솔버/재료 지정 테이블 -->
   {#if sceneState.models.length > 0}
@@ -180,17 +205,16 @@
               <option value="spg">SPG</option>
             </select>
 
-            <!-- 재료 선택 -->
-            <select class="cell-select mat-sel"
-              value={getModelMaterial(model.name)}
-              onchange={(e) => handleMaterialChange(model.name, e)}>
-              {#each materialOptions as opt}
-                <option value={opt.value}>{opt.value}</option>
-              {/each}
-            </select>
+            <!-- 재료 표시 (읽기 전용 — Material 탭에서 설정) -->
+            <span class="mat-summary" title={getModelMaterialSummary(model.name)}>
+              {getModelMaterialLabel(model.name)}
+            </span>
           </div>
         {/each}
       </div>
+
+      <!-- 재료 안내 -->
+      <div class="mat-hint">※ 재료 변경은 Material 탭에서</div>
 
       <!-- 일괄 적용 버튼 -->
       <div class="bulk-row">
@@ -231,18 +255,34 @@
     {/if}
   </button>
 
-  <!-- 진행률 -->
+  <!-- 진행률 + 취소 버튼 -->
   {#if analysisState.isRunning}
     <div class="progress-section">
-      <div class="progress-text">{analysisState.progressMessage}</div>
+      <div class="progress-header">
+        <span class="progress-text">{analysisState.progressMessage}</span>
+        <button class="cancel-btn" onclick={cancelAnalysis}>✕ Cancel</button>
+      </div>
       <div class="progress-bar-bg">
         <div class="progress-bar" style:width="{analysisState.progress * 100}%"></div>
       </div>
-      <div class="progress-pct">{(analysisState.progress * 100).toFixed(0)}%</div>
+      <div class="progress-footer">
+        <span class="progress-pct">{(analysisState.progress * 100).toFixed(0)}%</span>
+        <span class="elapsed">{(analysisState.elapsedMs / 1000).toFixed(1)}s</span>
+      </div>
     </div>
   {/if}
 
-  {#if wsState.lastError}
+  <!-- 해석 완료 후 소요 시간 -->
+  {#if !analysisState.isRunning && analysisState.hasResult && analysisState.elapsedMs > 0}
+    <div class="result-info">
+      ✅ 해석 완료 — {(analysisState.elapsedMs / 1000).toFixed(1)}초
+    </div>
+  {/if}
+
+  <!-- 에러 메시지 -->
+  {#if analysisState.lastError}
+    <div class="error-msg">❌ {analysisState.lastError}</div>
+  {:else if wsState.lastError}
     <div class="error-msg">{wsState.lastError}</div>
   {/if}
 </div>
@@ -329,6 +369,18 @@
   }
   .bulk-btn:hover { opacity: 0.8; }
 
+  /* 재료 요약 (읽기 전용) */
+  .mat-summary {
+    font-size: 9px; color: #555; font-weight: 500;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    cursor: help; padding: 2px 4px; background: #f5f5f5;
+    border-radius: 2px; border: 1px solid #e0e0e0;
+  }
+  .mat-hint {
+    font-size: 9px; color: #999; text-align: center;
+    margin-top: 6px; padding: 2px 0;
+  }
+
   /* 솔버 설명 */
   .solver-descs {
     display: flex; flex-direction: column; gap: 4px;
@@ -357,22 +409,62 @@
     font-size: 10px; font-weight: normal; opacity: 0.8;
   }
 
+  /* 체크리스트 보조 텍스트 */
+  .hint { font-size: 9px; color: #aaa; margin-left: 2px; }
+
+  /* 검증 에러 */
+  .validation-errors {
+    margin-bottom: 8px; padding: 6px 8px;
+    background: #fff3e0; border: 1px solid #ffcc80; border-radius: 4px;
+  }
+  .validation-item {
+    font-size: 10px; color: #e65100; padding: 1px 0;
+  }
+
   /* 진행률 */
   .progress-section {
     margin-top: 8px; padding: 8px; background: #e3f2fd; border-radius: 4px;
   }
-  .progress-text { font-size: 11px; color: #1565c0; margin-bottom: 4px; }
+  .progress-header {
+    display: flex; align-items: center; justify-content: space-between;
+    margin-bottom: 4px;
+  }
+  .progress-text { font-size: 11px; color: #1565c0; }
+  .cancel-btn {
+    padding: 2px 8px; font-size: 10px; font-weight: 600;
+    border: 1px solid #e53935; border-radius: 3px;
+    background: #fff; color: #e53935; cursor: pointer;
+    transition: all 0.15s;
+  }
+  .cancel-btn:hover {
+    background: #e53935; color: #fff;
+  }
   .progress-bar-bg {
     height: 4px; background: #bbdefb; border-radius: 2px; overflow: hidden;
   }
   .progress-bar {
     height: 100%; background: #1976d2; transition: width 0.3s;
   }
-  .progress-pct {
-    font-size: 10px; color: #1565c0; text-align: right; margin-top: 2px;
+  .progress-footer {
+    display: flex; justify-content: space-between; margin-top: 2px;
   }
+  .progress-pct {
+    font-size: 10px; color: #1565c0;
+  }
+  .elapsed {
+    font-size: 10px; color: #888;
+  }
+
+  /* 결과 정보 */
+  .result-info {
+    margin-top: 8px; padding: 6px 8px;
+    background: #e8f5e9; border-radius: 4px;
+    font-size: 11px; color: #2e7d32;
+  }
+
+  /* 에러 메시지 */
   .error-msg {
-    margin-top: 8px; padding: 6px; background: #ffebee; color: #c62828;
+    margin-top: 8px; padding: 6px 8px; background: #ffebee; color: #c62828;
     border-radius: 4px; font-size: 11px;
   }
 </style>

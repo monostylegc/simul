@@ -8,7 +8,7 @@
   import PreProcessPanel from './PreProcessPanel.svelte';
   import SolvePanel from './SolvePanel.svelte';
   import PostProcessPanel from './PostProcessPanel.svelte';
-  import ViewPanel from './ViewPanel.svelte';
+  import MaterialPanel from './MaterialPanel.svelte';
 </script>
 
 <aside class="sidebar">
@@ -16,14 +16,14 @@
     <FilePanel />
   {:else if uiState.activeTab === 'modeling'}
     <ModelingPanel />
+  {:else if uiState.activeTab === 'material'}
+    <MaterialPanel />
   {:else if uiState.activeTab === 'preprocess'}
     <PreProcessPanel />
   {:else if uiState.activeTab === 'solve'}
     <SolvePanel />
   {:else if uiState.activeTab === 'postprocess'}
     <PostProcessPanel />
-  {:else if uiState.activeTab === 'view'}
-    <ViewPanel />
   {/if}
 </aside>
 

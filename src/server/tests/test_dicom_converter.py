@@ -32,7 +32,7 @@ class TestConvertDicomToNifti:
         reader.Execute.return_value = self._make_mock_image()
         return reader
 
-    @patch("src.server.dicom_converter.sitk", create=True)
+    @patch("src.server.services.dicom_convert.sitk", create=True)
     def test_single_series(self, mock_sitk_module, tmp_path):
         """단일 시리즈 변환."""
         import SimpleITK as sitk
@@ -49,7 +49,7 @@ class TestConvertDicomToNifti:
 
         with patch("SimpleITK.ImageSeriesReader", return_value=mock_reader):
             with patch("SimpleITK.WriteImage") as mock_write:
-                from src.server.dicom_converter import convert_dicom_to_nifti
+                from src.server.services.dicom_convert import convert_dicom_to_nifti
                 result = convert_dicom_to_nifti(str(dicom_dir), output_path)
 
         assert result["nifti_path"] == output_path
@@ -72,7 +72,7 @@ class TestConvertDicomToNifti:
         )
         MockReader.return_value = reader
 
-        from src.server.dicom_converter import convert_dicom_to_nifti
+        from src.server.services.dicom_convert import convert_dicom_to_nifti
         result = convert_dicom_to_nifti(str(dicom_dir), str(tmp_path / "out.nii.gz"))
 
         assert result["n_slices"] == 200
@@ -82,7 +82,7 @@ class TestConvertDicomToNifti:
 
     def test_missing_directory(self, tmp_path):
         """존재하지 않는 디렉토리 → FileNotFoundError."""
-        from src.server.dicom_converter import convert_dicom_to_nifti
+        from src.server.services.dicom_convert import convert_dicom_to_nifti
         with pytest.raises(FileNotFoundError):
             convert_dicom_to_nifti(str(tmp_path / "nonexistent"))
 
@@ -96,7 +96,7 @@ class TestConvertDicomToNifti:
         reader.GetGDCMSeriesIDs.return_value = []
         MockReader.return_value = reader
 
-        from src.server.dicom_converter import convert_dicom_to_nifti
+        from src.server.services.dicom_convert import convert_dicom_to_nifti
         with pytest.raises(ValueError, match="유효한 DICOM 시리즈 없음"):
             convert_dicom_to_nifti(str(dicom_dir))
 
@@ -113,7 +113,7 @@ class TestConvertDicomToNifti:
 
         callback = MagicMock()
 
-        from src.server.dicom_converter import convert_dicom_to_nifti
+        from src.server.services.dicom_convert import convert_dicom_to_nifti
         convert_dicom_to_nifti(str(dicom_dir), str(tmp_path / "o.nii.gz"),
                                progress_callback=callback)
 
@@ -130,7 +130,7 @@ class TestConvertDicomToNifti:
         reader = self._make_mock_reader()
         MockReader.return_value = reader
 
-        from src.server.dicom_converter import convert_dicom_to_nifti
+        from src.server.services.dicom_convert import convert_dicom_to_nifti
         result = convert_dicom_to_nifti(str(dicom_dir))
 
         assert result["nifti_path"] == str(tmp_path / "my_dicom.nii.gz")
@@ -152,7 +152,7 @@ class TestConvertDicomToNifti:
         }.get(tag, "")
         MockReader.return_value = reader
 
-        from src.server.dicom_converter import convert_dicom_to_nifti
+        from src.server.services.dicom_convert import convert_dicom_to_nifti
         result = convert_dicom_to_nifti(str(dicom_dir), str(tmp_path / "o.nii.gz"))
 
         assert result["patient_info"]["modality"] == "CT"

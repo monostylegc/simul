@@ -2,9 +2,6 @@
 
 import os
 import uuid
-import shutil
-from pathlib import Path
-
 from typing import List
 from fastapi import FastAPI, WebSocket, UploadFile, File, HTTPException
 from fastapi.staticfiles import StaticFiles
@@ -12,27 +9,24 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 
 from .ws_handler import handle_websocket
-
-# 경로 설정
-BASE_DIR = Path(__file__).resolve().parent.parent.parent  # pysim/
-SIMULATOR_DIR = BASE_DIR / "src" / "simulator"
-UPLOAD_DIR = Path("/tmp/spine_sim")
+from .config import BASE_DIR, UPLOAD_DIR, STATIC_DIR, CORS_ORIGINS
 
 app = FastAPI(title="Spine Surgery Simulator")
 
-# CORS 미들웨어 (개발용)
+# CORS 미들웨어
+# 기본값: localhost 개발 포트 / 프로덕션: SPINE_SIM_CORS_ORIGINS 환경변수로 제어
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=CORS_ORIGINS,
+    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_headers=["Content-Type", "Authorization"],
 )
 
 
 @app.get("/")
 async def index():
     """시뮬레이터 메인 페이지 서빙."""
-    return FileResponse(SIMULATOR_DIR / "index.html")
+    return FileResponse(STATIC_DIR / "index.html")
 
 
 @app.post("/api/upload")
@@ -113,6 +107,24 @@ async def upload_dicom(files: List[UploadFile] = File(...)):
     })
 
 
+@app.get("/api/gpu-info")
+async def gpu_info():
+    """GPU 가용성 및 정보 조회.
+
+    Returns:
+        {available, name, memory_mb, cuda_version, driver_version}
+    """
+    from .services.gpu_detect import detect_gpu
+    info = detect_gpu()
+    return JSONResponse({
+        "available": info.available,
+        "name": info.name,
+        "memory_mb": info.memory_mb,
+        "cuda_version": info.cuda_version,
+        "driver_version": info.driver_version,
+    })
+
+
 @app.post("/api/upload_plan")
 async def upload_plan(file: UploadFile = File(...)):
     """수술 계획 JSON 업로드."""
@@ -132,7 +144,7 @@ async def websocket_endpoint(ws: WebSocket):
 
 
 # 정적 파일 마운트 (index.html 이외의 파일: js, stl, css 등)
-app.mount("/", StaticFiles(directory=str(SIMULATOR_DIR)), name="static")
+app.mount("/", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 
 if __name__ == "__main__":

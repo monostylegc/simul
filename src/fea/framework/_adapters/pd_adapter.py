@@ -29,23 +29,36 @@ class PDAdapter(AdapterBase):
 
         dim = domain.dim
         n_div = domain.n_divisions
-        n_particles = int(np.prod(n_div))
         size = domain.size
         origin = domain.origin
 
-        # 입자 간격 계산
-        if dim == 2:
+        # ── 입자 좌표 결정 ──
+        # _custom_positions 가 있으면 실제 복셀 좌표 직접 사용 (PD/SPG 파이프라인)
+        # 없으면 균등 그리드 생성 (기존 방식)
+        custom_pos: np.ndarray | None = getattr(domain, "_custom_positions", None)
+
+        if custom_pos is not None:
+            # 실제 복셀 중심 좌표 → n_per_axis 기반 spacing 추정
+            n_particles = len(custom_pos)
+            # spacing: 바운딩 박스 / 분할 수 (horizon 계산 전용)
             spacing = size[0] / (n_div[0] - 1) if n_div[0] > 1 else size[0]
+            horizon_factor = options.get("horizon_factor", 3.015)
+            horizon = horizon_factor * spacing
+            # 입자 부피: spacing^3 균등 근사
+            volumes = np.full(n_particles, spacing ** dim, dtype=np.float64)
+            self.ps = ParticleSystem(n_particles, dim=dim)
+            self.ps.initialize_from_arrays(custom_pos, volumes, density=material.density)
         else:
-            spacing = size[0] / (n_div[0] - 1) if n_div[0] > 1 else size[0]
-
-        # Horizon
-        horizon_factor = options.get("horizon_factor", 3.015)
-        horizon = horizon_factor * spacing
-
-        # 입자 시스템
-        self.ps = ParticleSystem(n_particles, dim=dim)
-        self.ps.initialize_from_grid(origin, spacing, n_div, density=material.density)
+            # 균등 그리드 방식 (기존)
+            n_particles = int(np.prod(n_div))
+            if dim == 2:
+                spacing = size[0] / (n_div[0] - 1) if n_div[0] > 1 else size[0]
+            else:
+                spacing = size[0] / (n_div[0] - 1) if n_div[0] > 1 else size[0]
+            horizon_factor = options.get("horizon_factor", 3.015)
+            horizon = horizon_factor * spacing
+            self.ps = ParticleSystem(n_particles, dim=dim)
+            self.ps.initialize_from_grid(origin, spacing, n_div, density=material.density)
 
         # 이웃 탐색
         positions = self.ps.X.to_numpy()

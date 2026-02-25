@@ -29,7 +29,7 @@ export default defineConfig({
     },
   },
   build: {
-    outDir: '../simulator/dist',
+    outDir: '../simulator',
     emptyOutDir: true,
     rollupOptions: {
       output: {

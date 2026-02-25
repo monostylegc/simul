@@ -74,34 +74,21 @@ class SolveStage(StageBase):
             if progress_callback:
                 progress_callback("solve", {"message": f"입자 {n_particles}개 설정 중..."})
 
-            # 바운딩 박스 계산
-            pos_min = positions.min(axis=0)
-            pos_max = positions.max(axis=0)
-            origin = tuple(pos_min.tolist())
-            size = tuple((pos_max - pos_min).tolist())
-
-            # 분할 수 추정
-            n_per_axis = max(2, int(round(n_particles ** (1.0 / 3.0))))
-            n_divisions = (n_per_axis, n_per_axis, n_per_axis)
-
-            # 프레임워크 초기화 + 도메인 생성
-            from src.fea.framework import init, create_domain, Material, Solver, Method
+            # 프레임워크 초기화
+            from src.fea.framework import init, Material, Solver, Method
+            from src.fea.framework.domain import create_particle_domain
 
             init()
 
             method_map = {"fem": Method.FEM, "pd": Method.PD, "spg": Method.SPG}
             method = method_map[self.method]
 
-            domain = create_domain(
-                method=method,
-                dim=3,
-                origin=origin,
-                size=size,
-                n_divisions=n_divisions,
-            )
+            # create_particle_domain: 바운딩박스·n_divisions 계산 + 실제 좌표(_custom_positions) 설정
+            # get_positions() / select() 가 실제 복셀 좌표를 기준으로 동작한다
+            domain = create_particle_domain(positions, method=method)
 
-            # 하단 고정, 상단 하중 (기본 경계조건)
-            bottom = domain.select(axis=2, value=pos_min[2])
+            # 하단 고정 (실제 복셀 좌표 기준 select)
+            bottom = domain.select(axis=2, value=positions.min(axis=0)[2])
             domain.set_fixed(bottom)
 
             # 재료 설정

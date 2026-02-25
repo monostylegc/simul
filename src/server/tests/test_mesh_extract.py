@@ -22,7 +22,7 @@ class TestMeshExtractPipeline:
 
     def test_extract_from_npz(self, sample_labelmap):
         """NPZ 라벨맵에서 메쉬 추출."""
-        from src.server.mesh_extract_pipeline import extract_meshes
+        from src.server.services.mesh_extract import extract_meshes
 
         request = MeshExtractRequest(
             labels_path=sample_labelmap,
@@ -34,20 +34,26 @@ class TestMeshExtractPipeline:
         # bone과 disc 2개 메쉬가 추출되어야 함
         assert len(result["meshes"]) >= 1
 
-        # 각 메쉬에 필수 필드 확인
+        # 각 메쉬에 필수 필드 확인 (base64 인코딩)
+        import base64
         for m in result["meshes"]:
             assert "label" in m
             assert "name" in m
-            assert "vertices" in m
-            assert "faces" in m
+            assert "vertices_b64" in m, "vertices_b64 필드 필수"
+            assert "faces_b64" in m, "faces_b64 필드 필수"
             assert "material_type" in m
             assert "color" in m
             assert m["n_vertices"] > 0
             assert m["n_faces"] > 0
+            # base64 디코딩 검증
+            verts_bytes = base64.b64decode(m["vertices_b64"])
+            assert len(verts_bytes) == m["n_vertices"] * 3 * 4
+            faces_bytes = base64.b64decode(m["faces_b64"])
+            assert len(faces_bytes) == m["n_faces"] * 3 * 4
 
     def test_selected_labels(self, sample_labelmap):
         """특정 라벨만 추출."""
-        from src.server.mesh_extract_pipeline import extract_meshes
+        from src.server.services.mesh_extract import extract_meshes
 
         request = MeshExtractRequest(
             labels_path=sample_labelmap,
@@ -62,7 +68,7 @@ class TestMeshExtractPipeline:
 
     def test_nonexistent_file(self):
         """존재하지 않는 파일."""
-        from src.server.mesh_extract_pipeline import extract_meshes
+        from src.server.services.mesh_extract import extract_meshes
 
         request = MeshExtractRequest(labels_path="/tmp/nonexistent.npz")
         with pytest.raises(FileNotFoundError):
@@ -70,7 +76,7 @@ class TestMeshExtractPipeline:
 
     def test_progress_callback(self, sample_labelmap):
         """진행률 콜백 호출 확인."""
-        from src.server.mesh_extract_pipeline import extract_meshes
+        from src.server.services.mesh_extract import extract_meshes
 
         calls = []
         def cb(step, detail):
@@ -84,7 +90,7 @@ class TestMeshExtractPipeline:
 
     def test_material_colors(self):
         """재료 색상 매핑."""
-        from src.server.mesh_extract_pipeline import _material_color
+        from src.server.services.mesh_extract import _material_color
 
         assert _material_color("bone") == "#e6d5c3"
         assert _material_color("disc") == "#6ba3d6"
@@ -95,7 +101,7 @@ class TestMeshExtractPipeline:
 class TestLoadLabels:
     def test_load_npz(self, tmp_path):
         """NPZ 형식 로드."""
-        from src.server.mesh_extract_pipeline import _load_labels
+        from src.server.services.mesh_extract import _load_labels
 
         labels = np.zeros((5, 5, 5), dtype=np.int32)
         labels[2, 2, 2] = 120
@@ -108,7 +114,7 @@ class TestLoadLabels:
 
     def test_unsupported_format(self, tmp_path):
         """지원하지 않는 형식."""
-        from src.server.mesh_extract_pipeline import _load_labels
+        from src.server.services.mesh_extract import _load_labels
 
         path = tmp_path / "test.xyz"
         path.write_text("dummy")

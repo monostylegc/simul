@@ -9,8 +9,8 @@
   import { uiState } from '$lib/stores/ui.svelte';
   import {
     setPostMode, setComponent, setColormap, setDispScale,
-    setParticleSize, setOpacity,
-    savePreOpResults, showComparison,
+    setParticleSize, setOpacity, setClipPlane,
+    savePreOpResults, showComparison, exportResultsCSV,
   } from '$lib/actions/analysis';
   import type { PostProcessMode, VectorComponent } from '$lib/analysis/PostProcessor';
   import type { ColormapName } from '$lib/analysis/colormap';
@@ -61,6 +61,31 @@
   function handleCompare() {
     showComparison();
     uiState.toast('수술 전/후 비교 표시', 'info');
+  }
+
+  // ── 클리핑 평면 핸들러 (Step 6) ──
+
+  function handleClipToggle(e: Event) {
+    const enabled = (e.target as HTMLInputElement).checked;
+    setClipPlane(enabled);
+  }
+  function handleClipAxis(e: Event) {
+    const axis = (e.target as HTMLSelectElement).value as 'x' | 'y' | 'z';
+    setClipPlane(analysisState.clipEnabled, axis);
+  }
+  function handleClipPosition(e: Event) {
+    const pos = parseFloat((e.target as HTMLInputElement).value);
+    setClipPlane(analysisState.clipEnabled, undefined, pos);
+  }
+  function handleClipInvert(e: Event) {
+    const invert = (e.target as HTMLInputElement).checked;
+    setClipPlane(analysisState.clipEnabled, undefined, undefined, invert);
+  }
+
+  // ── Export (Step 7) ──
+
+  function handleExportCSV() {
+    exportResultsCSV();
   }
 
   /** 단위 */
@@ -193,6 +218,46 @@
       </table>
     </div>
 
+    <!-- 클리핑 평면 (Step 6) -->
+    <div class="section">
+      <div class="section-title">Clip Plane</div>
+      <div class="toggle-row">
+        <label><input type="checkbox" checked={analysisState.clipEnabled}
+          onchange={handleClipToggle}> 활성화</label>
+      </div>
+      {#if analysisState.clipEnabled}
+        <div class="clip-controls">
+          <div class="field-row">
+            <label for="clip-axis" class="field-label">축</label>
+            <select id="clip-axis" class="field-select" value={analysisState.clipAxis}
+              onchange={handleClipAxis}>
+              <option value="x">X</option>
+              <option value="y">Y</option>
+              <option value="z">Z</option>
+            </select>
+          </div>
+          <div class="slider-row">
+            <label for="clip-pos">위치</label>
+            <input id="clip-pos" type="range" min="-1" max="1" step="0.01"
+              value={analysisState.clipPosition} oninput={handleClipPosition}>
+            <span class="val">{analysisState.clipPosition.toFixed(2)}</span>
+          </div>
+          <div class="toggle-row">
+            <label><input type="checkbox" checked={analysisState.clipInvert}
+              onchange={handleClipInvert}> 반전</label>
+          </div>
+        </div>
+      {/if}
+    </div>
+
+    <!-- 내보내기 (Step 7) -->
+    <div class="section">
+      <div class="section-title">Export</div>
+      <button class="tool-btn export-btn" onclick={handleExportCSV}>
+        📄 Export CSV
+      </button>
+    </div>
+
     <!-- 수술 전/후 비교 -->
     <div class="section compare">
       <div class="section-title" style="color: #ff6f00;">Pre/Post-Op 비교</div>
@@ -309,4 +374,12 @@
   .compare-btn { background: #ff6f00; }
 
   .hint { font-size: 10px; color: #888; margin: 4px 0; }
+
+  /* 토글 행 */
+  .toggle-row { font-size: 11px; color: #555; margin-bottom: 4px; }
+  .toggle-row label { display: flex; align-items: center; gap: 4px; cursor: pointer; }
+  .clip-controls { margin-top: 6px; }
+
+  /* Export 버튼 */
+  .export-btn { background: #43a047; }
 </style>

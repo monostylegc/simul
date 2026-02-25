@@ -2,16 +2,21 @@
  * WebSocket 클라이언트 — Python 서버와 실시간 통신
  *
  * 프로토콜:
- *   → {"type": "run_analysis",   "data": AnalysisRequest}
- *   → {"type": "segment",        "data": SegmentationRequest}
- *   → {"type": "extract_meshes", "data": MeshExtractRequest}
- *   → {"type": "auto_material",  "data": AutoMaterialRequest}
+ *   → {"type": "run_analysis",      "data": AnalysisRequest}
+ *   → {"type": "cancel_analysis",   "data": {"request_id": "..."}}
+ *   → {"type": "segment",           "data": SegmentationRequest}
+ *   → {"type": "extract_meshes",    "data": MeshExtractRequest}
+ *   → {"type": "auto_material",     "data": AutoMaterialRequest}
  *   ← {"type": "progress",          "data": {...}}
  *   ← {"type": "result",            "data": {...}}
- *   ← {"type": "segment_result",    "data": {...}}
- *   ← {"type": "meshes_result",     "data": {...}}
- *   ← {"type": "material_result",   "data": {...}}
+ *   ← {"type": "cancelled",         "data": {"request_id": "..."}}
  *   ← {"type": "error",             "data": {"message": "..."}}
+ *
+ * 기능:
+ *   - 해석 타임아웃 (기본 10분)
+ *   - 해석 취소 요청
+ *   - 지수 백오프 자동 재연결 (최대 5회)
+ *   - 재연결 시 해석 진행 상태 확인
  */
 
 import type {
@@ -26,6 +31,9 @@ import type {
   MaterialResultCallback,
   PipelineStepCallback,
   PipelineResultCallback,
+  ImplantMeshResultCallback,
+  GuidelineMeshResultCallback,
+  CancelledCallback,
 } from './types';
 
 export class WSClient {
@@ -49,9 +57,25 @@ export class WSClient {
   private _onPipelineStep: PipelineStepCallback | null = null;
   private _onPipelineResult: PipelineResultCallback | null = null;
 
-  // 자동 재연결
+  // 임플란트/가이드라인 콜백
+  private _onImplantMeshResult: ImplantMeshResultCallback | null = null;
+  private _onGuidelineMeshResult: GuidelineMeshResultCallback | null = null;
+
+  // 취소 콜백
+  private _onCancelled: CancelledCallback | null = null;
+
+  // ── 해석 타임아웃/취소 ──
+  private _solveTimeout: ReturnType<typeof setTimeout> | null = null;
+  private _currentRequestId: string | null = null;
+
+  /** 해석 타임아웃 (ms). 기본 10분 */
+  solveTimeoutMs = 600_000;
+
+  // ── 지수 백오프 재연결 ──
   private _reconnectTimer: ReturnType<typeof setTimeout> | null = null;
-  private _reconnectDelay = 2000;
+  private _reconnectAttempt = 0;
+  /** 최대 재연결 시도 횟수 */
+  maxReconnect = 5;
 
   constructor(url?: string) {
     // 자동으로 현재 호스트 기반 WS URL 결정
@@ -62,6 +86,10 @@ export class WSClient {
     }
     this.url = url;
   }
+
+  // ====================================================================
+  // 연결 관리
+  // ====================================================================
 
   /**
    * 서버 연결
@@ -79,6 +107,7 @@ export class WSClient {
 
     this.ws.onopen = () => {
       this.connected = true;
+      this._reconnectAttempt = 0;  // 성공 시 카운터 리셋
       console.log('WebSocket 연결됨:', this.url);
       this._onConnect?.();
     };
@@ -118,23 +147,10 @@ export class WSClient {
   }
 
   /**
-   * 콜백 등록
-   */
-  onProgress(cb: ProgressCallback): void { this._onProgress = cb; }
-  onResult(cb: ResultCallback): void { this._onResult = cb; }
-  onError(cb: ErrorCallback): void { this._onError = cb; }
-  onConnect(cb: ConnectCallback): void { this._onConnect = cb; }
-  onDisconnect(cb: DisconnectCallback): void { this._onDisconnect = cb; }
-  onSegmentResult(cb: SegmentResultCallback): void { this._onSegmentResult = cb; }
-  onMeshesResult(cb: MeshesResultCallback): void { this._onMeshesResult = cb; }
-  onMaterialResult(cb: MaterialResultCallback): void { this._onMaterialResult = cb; }
-  onPipelineStep(cb: PipelineStepCallback): void { this._onPipelineStep = cb; }
-  onPipelineResult(cb: PipelineResultCallback): void { this._onPipelineResult = cb; }
-
-  /**
    * 연결 해제
    */
   disconnect(): void {
+    this._clearSolveTimeout();
     if (this._reconnectTimer) {
       clearTimeout(this._reconnectTimer);
       this._reconnectTimer = null;
@@ -147,7 +163,65 @@ export class WSClient {
     this.connected = false;
   }
 
-  // ── 내부 메서드 ──
+  // ====================================================================
+  // 해석 타임아웃/취소 (Step 2)
+  // ====================================================================
+
+  /**
+   * 해석 요청 전송 + 타임아웃 설정.
+   * 기존 send('run_analysis', ...) 대신 이 메서드 사용 권장.
+   */
+  sendAnalysis(request: unknown, timeoutMs?: number): boolean {
+    this._currentRequestId = crypto.randomUUID();
+    const ok = this.send('run_analysis', {
+      ...request as Record<string, unknown>,
+      request_id: this._currentRequestId,
+    });
+
+    if (ok) {
+      this._startSolveTimeout(timeoutMs ?? this.solveTimeoutMs);
+    }
+    return ok;
+  }
+
+  /**
+   * 해석 취소 요청.
+   * 서버에 cancel_analysis 메시지를 보내고 타임아웃 정리.
+   */
+  cancelAnalysis(): void {
+    if (this._currentRequestId) {
+      this.send('cancel_analysis', { request_id: this._currentRequestId });
+      this._clearSolveTimeout();
+      this._currentRequestId = null;
+    }
+  }
+
+  /** 현재 진행 중인 해석 요청 ID */
+  get currentRequestId(): string | null {
+    return this._currentRequestId;
+  }
+
+  // ====================================================================
+  // 콜백 등록
+  // ====================================================================
+
+  onProgress(cb: ProgressCallback): void { this._onProgress = cb; }
+  onResult(cb: ResultCallback): void { this._onResult = cb; }
+  onError(cb: ErrorCallback): void { this._onError = cb; }
+  onConnect(cb: ConnectCallback): void { this._onConnect = cb; }
+  onDisconnect(cb: DisconnectCallback): void { this._onDisconnect = cb; }
+  onSegmentResult(cb: SegmentResultCallback): void { this._onSegmentResult = cb; }
+  onMeshesResult(cb: MeshesResultCallback): void { this._onMeshesResult = cb; }
+  onMaterialResult(cb: MaterialResultCallback): void { this._onMaterialResult = cb; }
+  onPipelineStep(cb: PipelineStepCallback): void { this._onPipelineStep = cb; }
+  onPipelineResult(cb: PipelineResultCallback): void { this._onPipelineResult = cb; }
+  onImplantMeshResult(cb: ImplantMeshResultCallback): void { this._onImplantMeshResult = cb; }
+  onGuidelineMeshResult(cb: GuidelineMeshResultCallback): void { this._onGuidelineMeshResult = cb; }
+  onCancelled(cb: CancelledCallback): void { this._onCancelled = cb; }
+
+  // ====================================================================
+  // 내부: 메시지 디스패치
+  // ====================================================================
 
   private _dispatch(msg: WSMessage): void {
     switch (msg.type) {
@@ -155,7 +229,14 @@ export class WSClient {
         this._onProgress?.(msg.data as Parameters<ProgressCallback>[0]);
         break;
       case 'result':
+        this._clearSolveTimeout();
+        this._currentRequestId = null;
         this._onResult?.(msg.data as Parameters<ResultCallback>[0]);
+        break;
+      case 'cancelled':
+        this._clearSolveTimeout();
+        this._currentRequestId = null;
+        this._onCancelled?.(msg.data as Parameters<CancelledCallback>[0]);
         break;
       case 'segment_result':
         this._onSegmentResult?.(msg.data as Parameters<SegmentResultCallback>[0]);
@@ -172,7 +253,15 @@ export class WSClient {
       case 'pipeline_result':
         this._onPipelineResult?.(msg.data as Parameters<PipelineResultCallback>[0]);
         break;
+      case 'implant_mesh_result':
+        this._onImplantMeshResult?.(msg.data as Parameters<ImplantMeshResultCallback>[0]);
+        break;
+      case 'guideline_meshes_result':
+        this._onGuidelineMeshResult?.(msg.data as Parameters<GuidelineMeshResultCallback>[0]);
+        break;
       case 'error':
+        this._clearSolveTimeout();
+        this._currentRequestId = null;
         console.error('서버 에러:', (msg.data as { message: string }).message);
         this._onError?.(msg.data as Parameters<ErrorCallback>[0]);
         break;
@@ -183,12 +272,57 @@ export class WSClient {
     }
   }
 
+  // ====================================================================
+  // 내부: 타임아웃 관리
+  // ====================================================================
+
+  private _startSolveTimeout(ms: number): void {
+    this._clearSolveTimeout();
+    this._solveTimeout = setTimeout(() => {
+      console.warn(`해석 타임아웃 (${ms / 1000}초 초과)`);
+      this.cancelAnalysis();
+      // 에러 콜백 호출로 UI 상태 정리
+      this._onError?.({ message: `해석 타임아웃 (${Math.floor(ms / 60000)}분 초과) — 메쉬를 단순화하거나 서버 상태를 확인하세요` });
+    }, ms);
+  }
+
+  private _clearSolveTimeout(): void {
+    if (this._solveTimeout) {
+      clearTimeout(this._solveTimeout);
+      this._solveTimeout = null;
+    }
+  }
+
+  // ====================================================================
+  // 내부: 지수 백오프 재연결 (Step 3)
+  // ====================================================================
+
   private _scheduleReconnect(): void {
     if (this._reconnectTimer) return;
+    if (this._reconnectAttempt >= this.maxReconnect) {
+      console.error(`WebSocket 재연결 ${this.maxReconnect}회 실패 — 포기`);
+      this._onError?.({ message: `서버 연결 ${this.maxReconnect}회 실패 — 서버를 확인하세요` });
+      return;
+    }
+
+    // 지수 백오프: 2s, 4s, 8s, 16s, 30s (최대)
+    const delay = Math.min(2000 * Math.pow(2, this._reconnectAttempt), 30000);
+    this._reconnectAttempt++;
+
+    console.log(`WebSocket 재연결 시도 ${this._reconnectAttempt}/${this.maxReconnect} (${delay / 1000}초 후)...`);
+
     this._reconnectTimer = setTimeout(() => {
       this._reconnectTimer = null;
-      console.log('WebSocket 재연결 시도...');
       this.connect();
-    }, this._reconnectDelay);
+    }, delay);
+  }
+
+  /** 재연결 카운터 리셋 (수동 재연결 시) */
+  resetReconnect(): void {
+    this._reconnectAttempt = 0;
+    if (this._reconnectTimer) {
+      clearTimeout(this._reconnectTimer);
+      this._reconnectTimer = null;
+    }
   }
 }

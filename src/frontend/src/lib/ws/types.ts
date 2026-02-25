@@ -12,6 +12,9 @@ export type WSMessageType =
   | 'material_result'
   | 'pipeline_step'
   | 'pipeline_result'
+  | 'implant_mesh_result'
+  | 'guideline_meshes_result'
+  | 'cancelled'
   | 'error'
   | 'pong';
 
@@ -19,10 +22,13 @@ export type WSMessageType =
 
 export type WSRequestType =
   | 'run_analysis'
+  | 'cancel_analysis'
   | 'segment'
   | 'extract_meshes'
   | 'auto_material'
-  | 'pipeline';
+  | 'pipeline'
+  | 'get_implant_mesh'
+  | 'get_guideline_meshes';
 
 // ── 메시지 구조 ──
 
@@ -125,12 +131,52 @@ export interface PipelineStepData {
   message?: string;
 }
 
+/** 파이프라인에서 추출된 개별 메쉬 데이터 (base64 바이너리 인코딩) */
+export interface PipelineMeshData {
+  label: number;
+  name: string;
+  vertices_b64: string;    // base64 인코딩 Float32Array (n_vertices * 3 * 4 bytes)
+  faces_b64: string;       // base64 인코딩 Int32Array (n_faces * 3 * 4 bytes)
+  material_type: string;   // "bone" | "disc" | "soft_tissue" | "unknown"
+  color: string;           // 16진 색상 (예: "#e6d5c3")
+  bounds: { min: number[]; max: number[] };
+  n_vertices: number;
+  n_faces: number;
+}
+
 export interface PipelineResultData {
-  meshes?: Array<{
+  meshes?: PipelineMeshData[];
+  nifti_path?: string;
+  labels_path?: string;
+  seg_info?: Array<{
+    label: number;
     name: string;
-    path: string;
+    material_type: string;
+    voxel_count: number;
   }>;
+  patient_info?: Record<string, string>;
   [key: string]: unknown;
+}
+
+// ── 임플란트/가이드라인 ──
+
+/** 단일 메쉬 데이터 (임플란트·가이드라인 공통) */
+export interface MeshData {
+  name: string;
+  vertices: number[][];               // (N, 3) float
+  faces: number[][];                  // (M, 3) int
+  color: [number, number, number];    // RGB 0~1
+}
+
+/** 임플란트 메쉬 생성 결과 */
+export interface ImplantMeshResult extends MeshData {
+  implant_type: 'screw' | 'cage' | 'rod';
+}
+
+/** 가이드라인 메쉬 생성 결과 (양측 경로/안전영역/마커 포함) */
+export interface GuidelineMeshResult {
+  vertebra_name: string;
+  meshes: MeshData[];
 }
 
 // ── 콜백 타입 ──
@@ -145,3 +191,6 @@ export type MeshesResultCallback = (data: MeshesResultData) => void;
 export type MaterialResultCallback = (data: MaterialResultData) => void;
 export type PipelineStepCallback = (data: PipelineStepData) => void;
 export type PipelineResultCallback = (data: PipelineResultData) => void;
+export type ImplantMeshResultCallback = (data: ImplantMeshResult) => void;
+export type GuidelineMeshResultCallback = (data: GuidelineMeshResult) => void;
+export type CancelledCallback = (data: { request_id: string }) => void;

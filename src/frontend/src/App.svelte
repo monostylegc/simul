@@ -10,13 +10,40 @@
   import Canvas3D from './components/Canvas3D.svelte';
   import Sidebar from './components/sidebar/Sidebar.svelte';
   import Statusbar from './components/Statusbar.svelte';
+  import LoadingOverlay from './components/floating/LoadingOverlay.svelte';
   import { uiState } from '$lib/stores/ui.svelte';
+  import { pipelineState } from '$lib/stores/pipeline.svelte';
+  import { wsState } from '$lib/stores/websocket.svelte';
+  import { sceneState } from '$lib/stores/scene.svelte';
+  import { analysisState } from '$lib/stores/analysis.svelte';
+  import { WSClient } from '$lib/ws/client';
+  import {
+    loadMeshFromInlineData,
+    centerMeshesAtOrigin,
+    initializeVoxels,
+  } from '$lib/actions/loading';
+
+  // 디버그용 전역 접근 (개발 모드 전용)
+  if (typeof window !== 'undefined') {
+    (window as any).__debug = {
+      pipelineState,
+      wsState,
+      sceneState,
+      analysisState,
+      uiState,
+      WSClient,
+      loadMeshFromInlineData,
+      centerMeshesAtOrigin,
+      initializeVoxels,
+    };
+  }
 </script>
 
 <Menubar />
 
 <div class="main-container">
   <Canvas3D />
+  <LoadingOverlay />
   <Sidebar />
 </div>
 
@@ -49,6 +76,7 @@
 
 <style>
   .main-container {
+    position: relative;
     flex: 1;
     display: flex;
     overflow: hidden;

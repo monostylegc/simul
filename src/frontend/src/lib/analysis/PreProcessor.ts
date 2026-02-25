@@ -15,6 +15,35 @@ export interface MaterialPreset {
   label: string;
 }
 
+import type { ConstitutiveModel } from '$lib/stores/materials.svelte';
+
+/** 해석에 사용할 확정된 물성치 (라이브러리에서 선택 + 미세 조정 + 구성 모델) */
+export interface ResolvedMaterial {
+  key: string;      // 출처 식별 (라이브러리 키 또는 커스텀 키)
+  label: string;    // 표시 이름
+  E: number;        // Young's modulus [Pa]
+  nu: number;       // Poisson's ratio
+  density: number;  // [kg/m³]
+  // 구성 모델 (기본: linear_elastic)
+  constitutiveModel: ConstitutiveModel;
+  // 초탄성 파라미터 (선택적)
+  C10?: number;           // Mooney-Rivlin 제1상수 [Pa]
+  C01?: number;           // Mooney-Rivlin 제2상수 [Pa]
+  D1?: number;            // 비압축성 파라미터 [1/Pa]
+  mu_ogden?: number;      // Ogden 전단 계수 [Pa]
+  alpha_ogden?: number;   // Ogden 지수
+}
+
+/** 재료 미할당 시 기본값 (피질골) */
+const DEFAULT_MATERIAL: ResolvedMaterial = {
+  key: 'cortical_bone',
+  label: '피질골',
+  E: 15e9,
+  nu: 0.3,
+  density: 1850,
+  constitutiveModel: 'linear_elastic',
+};
+
 export interface BoundaryCondition {
   type: 'fixed' | 'force';
   indices: Set<number>;
@@ -89,8 +118,8 @@ export class PreProcessor {
   // 경계조건 목록
   boundaryConditions: BoundaryCondition[] = [];
 
-  // 재료 할당 (메쉬명 → 프리셋키)
-  materialAssignments: Record<string, string> = {};
+  // 재료 할당 (메쉬명 → 확정된 물성치)
+  materialAssignments: Record<string, ResolvedMaterial> = {};
 
   // 브러쉬 선택 (gridName → Set<linearIdx>)
   brushSelection: Map<string, Set<number>> = new Map();
@@ -208,6 +237,25 @@ export class PreProcessor {
     let count = 0;
     this.brushSelection.forEach(s => count += s.size);
     return count;
+  }
+
+  /**
+   * 현재 브러쉬 선택 영역의 무게 중심(centroid) 반환.
+   * Force BC 화살표 기준점 계산에 사용한다.
+   * 선택된 복셀이 없으면 null 반환.
+   */
+  getBrushSelectionCentroid(): THREE.Vector3 | null {
+    const positions = this.getBrushSelectionWorldPositions();
+    if (positions.length === 0) return null;
+
+    let cx = 0, cy = 0, cz = 0;
+    for (const p of positions) {
+      cx += p.x;
+      cy += p.y;
+      cz += p.z;
+    }
+    const n = positions.length;
+    return new THREE.Vector3(cx / n, cy / n, cz / n);
   }
 
   /**
@@ -357,15 +405,11 @@ export class PreProcessor {
   // ====================================================================
 
   /**
-   * 메쉬에 재료 프리셋 할당
+   * 메쉬에 재료 할당 (확정된 물성치)
    */
-  assignMaterial(meshName: string, presetKey: string): void {
-    if (!MATERIAL_PRESETS[presetKey]) {
-      console.warn(`알 수 없는 재료 프리셋: ${presetKey}`);
-      return;
-    }
-    this.materialAssignments[meshName] = presetKey;
-    console.log(`재료 할당: ${meshName} → ${MATERIAL_PRESETS[presetKey].label}`);
+  assignMaterial(meshName: string, material: ResolvedMaterial): void {
+    this.materialAssignments[meshName] = material;
+    console.log(`재료 할당: ${meshName} → ${material.label} (E=${material.E})`);
   }
 
   // ====================================================================
@@ -544,8 +588,41 @@ export class PreProcessor {
    *
    * FEM 영역: 복셀 → HEX8 볼륨 메쉬 (nodes + elements) + 영역별 BC
    * PD/SPG 영역: 복셀 중심 → 입자 좌표 + 영역별 BC
+   *
+   * 검증 실패 시 null 반환 + 콘솔 경고 출력
    */
-  buildAnalysisRequest(method: string): AnalysisRequest {
+  buildAnalysisRequest(method: string): AnalysisRequest | null {
+    // ── 입력 검증 ──
+    if (Object.keys(this.voxelGrids).length === 0) {
+      console.warn('[PreProcessor] 복셀 그리드가 비어 있음');
+      return null;
+    }
+    if (this.boundaryConditions.length === 0) {
+      console.warn('[PreProcessor] 경계조건 미설정');
+      return null;
+    }
+    // 고정 BC 필수 확인
+    const hasFixed = this.boundaryConditions.some(bc => bc.type === 'fixed');
+    if (!hasFixed) {
+      console.warn('[PreProcessor] 고정 경계조건(Fixed BC) 없음');
+      return null;
+    }
+    // Force BC 벡터 크기 검증
+    for (const bc of this.boundaryConditions) {
+      if (bc.type === 'force') {
+        for (const v of bc.values) {
+          if (v.length !== 3) {
+            console.warn(`[PreProcessor] Force 벡터 차원 오류: ${v.length}차원 (3차원 필요)`);
+            return null;
+          }
+          const mag = Math.sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
+          if (mag < 1e-6) {
+            console.warn('[PreProcessor] Force 벡터 크기가 0에 가까움');
+            return null;
+          }
+        }
+      }
+    }
     // 전체 PD/SPG 입자 좌표 (positions 배열)
     const positions: number[][] = [];
     const volumes: number[] = [];
@@ -556,8 +633,7 @@ export class PreProcessor {
 
     // 영역별 처리
     Object.entries(this.voxelGrids).forEach(([name, grid]) => {
-      const presetKey = this.materialAssignments[name] || 'bone';
-      const preset = MATERIAL_PRESETS[presetKey];
+      const resolved = this.materialAssignments[name] || DEFAULT_MATERIAL;
       const regionMethod = this.solverAssignments[name] || method;
 
       if (regionMethod === 'fem') {
@@ -573,11 +649,17 @@ export class PreProcessor {
         }
 
         materials.push({
-          name: presetKey,
+          name: resolved.key,
           method: 'fem',
-          E: preset.E,
-          nu: preset.nu,
-          density: preset.density,
+          E: resolved.E,
+          nu: resolved.nu,
+          density: resolved.density,
+          constitutive_model: resolved.constitutiveModel || 'linear_elastic',
+          C10: resolved.C10,
+          C01: resolved.C01,
+          D1: resolved.D1,
+          mu_ogden: resolved.mu_ogden,
+          alpha_ogden: resolved.alpha_ogden,
           node_indices: [],  // FEM은 nodes/elements 사용
           nodes: femMesh.nodes,
           elements: femMesh.elements,
@@ -625,11 +707,14 @@ export class PreProcessor {
         }
 
         materials.push({
-          name: presetKey,
+          name: resolved.key,
           method: regionMethod,
-          E: preset.E,
-          nu: preset.nu,
-          density: preset.density,
+          E: resolved.E,
+          nu: resolved.nu,
+          density: resolved.density,
+          constitutive_model: regionMethod === 'fem'
+            ? (resolved.constitutiveModel || 'linear_elastic')
+            : 'linear_elastic',  // PD/SPG는 항상 linear_elastic
           node_indices: indices,
           boundary_conditions: regionBCs,
         });

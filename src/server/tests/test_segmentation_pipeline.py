@@ -12,7 +12,7 @@ from src.server.models import SegmentationRequest
 class TestSegmentationPipeline:
     def test_nonexistent_file(self):
         """존재하지 않는 입력 파일."""
-        from src.server.segmentation_pipeline import run_segmentation
+        from src.server.services.segmentation import run_segmentation
 
         request = SegmentationRequest(input_path="/tmp/nonexistent.nii.gz")
         with pytest.raises(FileNotFoundError):

@@ -12,6 +12,11 @@
  *  - 변위 워프 (Warp by Vector)
  *  - 불투명도
  *  - 클리핑 평면
+ *
+ * 분리된 모듈:
+ *  - PostProcessorTypes.ts : 타입/인터페이스
+ *  - HEX8Utils.ts          : HEX8 기하 유틸 (표면 추출)
+ *  - ScalarMapper.ts       : 순수 함수 (스칼라 추출/통계/필터)
  */
 
 import * as THREE from 'three';
@@ -19,88 +24,37 @@ import { valuesToColors, createColorbar, colormapToCSS } from './colormap';
 import type { ColormapName } from './colormap';
 import type { AnalysisResultData, FEMRegionResult, ParticleRegionResult } from '$lib/ws/types';
 
-// ── 타입 정의 ──
+// ── 분리된 모듈에서 임포트 ──
+import { extractSurfaceTriangles } from './HEX8Utils';
+import {
+  getFEMNodeScalars,
+  getParticleScalars,
+  getLegacyScalars,
+  getAllScalars,
+  computeStats,
+  applyPointFilters,
+  isTriangleVisible,
+} from './ScalarMapper';
 
-export type PostProcessMode = 'displacement' | 'stress' | 'damage';
-export type VectorComponent = 'magnitude' | 'x' | 'y' | 'z';
-export type RepresentationType = 'points' | 'surface' | 'points+surface';
+// ── 타입 re-export (하위 호환 — 기존 임포트 경로 유지) ──
+export type {
+  PostProcessMode,
+  VectorComponent,
+  RepresentationType,
+  PostProcessStats,
+  ThresholdConfig,
+  ClipPlaneConfig,
+} from './PostProcessorTypes';
 
-export interface PostProcessStats {
-  maxDisp: number;
-  maxStress: number;
-  maxDamage: number;
-  minDisp: number;
-  minStress: number;
-  minDamage: number;
-  /** 현재 모드 스칼라 범위 */
-  currentMin: number;
-  currentMax: number;
-}
-
-export interface ThresholdConfig {
-  enabled: boolean;
-  lower: number;
-  upper: number;
-}
-
-export interface ClipPlaneConfig {
-  enabled: boolean;
-  axis: 'x' | 'y' | 'z';
-  position: number; // -1 ~ 1 (정규화)
-  invert: boolean;
-}
-
-// ── HEX8 표면 추출 유틸 ──
-
-/**
- * HEX8 요소 면 정의 (6면, 각 4노드)
- * 외향 법선 기준 반시계 방향
- */
-const HEX8_FACES: number[][] = [
-  [0, 3, 2, 1], // 하부 (z-)
-  [4, 5, 6, 7], // 상부 (z+)
-  [0, 1, 5, 4], // 전면 (y-)
-  [2, 3, 7, 6], // 후면 (y+)
-  [0, 4, 7, 3], // 좌측 (x-)
-  [1, 2, 6, 5], // 우측 (x+)
-];
-
-/**
- * HEX8 요소에서 표면 삼각형 추출
- * 내부 면(2개 요소가 공유)은 제외하고, 외부 면만 삼각형으로 변환
- */
-function extractSurfaceTriangles(
-  elements: number[][],
-): number[][] {
-  // 면 → 등장 횟수 매핑 (정렬된 노드 키)
-  const faceCount = new Map<string, { nodes: number[]; count: number }>();
-
-  for (const elem of elements) {
-    for (const faceLocalNodes of HEX8_FACES) {
-      const globalNodes = faceLocalNodes.map(li => elem[li]);
-      const key = [...globalNodes].sort((a, b) => a - b).join(',');
-
-      const existing = faceCount.get(key);
-      if (existing) {
-        existing.count++;
-      } else {
-        faceCount.set(key, { nodes: globalNodes, count: 1 });
-      }
-    }
-  }
-
-  // 1번만 등장 = 외부 면 → 삼각형 2개로 분할
-  const triangles: number[][] = [];
-  for (const { nodes, count } of faceCount.values()) {
-    if (count === 1) {
-      triangles.push([nodes[0], nodes[1], nodes[2]]);
-      triangles.push([nodes[0], nodes[2], nodes[3]]);
-    }
-  }
-
-  return triangles;
-}
-
+// 로컬 사용을 위한 import
+import type {
+  PostProcessMode,
+  VectorComponent,
+  RepresentationType,
+  PostProcessStats,
+  ThresholdConfig,
+  ClipPlaneConfig,
+} from './PostProcessorTypes';
 
 export class PostProcessor {
   private scene: THREE.Scene;
@@ -157,7 +111,7 @@ export class PostProcessor {
     currentMin: 0, currentMax: 0,
   };
 
-  // 원본 좌표 캐시 (변형 좌표 계산용)
+  // 원본 좌표 캐시 (레거시 변형 좌표 계산용)
   private _cachedPositions: number[][] | null = null;
 
   /** 바운딩 박스 (클리핑 정규화용) */
@@ -175,7 +129,7 @@ export class PostProcessor {
    */
   loadResults(resultData: AnalysisResultData): void {
     this.data = resultData;
-    this._computeStats();
+    this.stats = computeStats(resultData, this.mode, this.component);
     this._computeBBox();
 
     // 임계값 범위를 현재 데이터 범위로 초기화
@@ -200,7 +154,9 @@ export class PostProcessor {
    */
   setMode(mode: PostProcessMode): void {
     this.mode = mode;
-    this._computeStats();
+    if (this.data) {
+      this.stats = computeStats(this.data, this.mode, this.component);
+    }
 
     // 모드 변경 시 임계값 범위 리셋
     this.threshold.lower = this.stats.currentMin;
@@ -215,7 +171,9 @@ export class PostProcessor {
    */
   setComponent(comp: VectorComponent): void {
     this.component = comp;
-    this._computeStats();
+    if (this.data) {
+      this.stats = computeStats(this.data, this.mode, this.component);
+    }
     this.threshold.lower = this.stats.currentMin;
     this.threshold.upper = this.stats.currentMax;
     this.customRange = null;
@@ -306,7 +264,7 @@ export class PostProcessor {
     this.clear();
 
     // 전체 스칼라 범위 계산 (모든 영역 통합)
-    const allScalars = this._getAllScalars();
+    const allScalars = getAllScalars(this.data, this.mode, this.component);
     const cMin = this.customRange?.min ?? (allScalars.length > 0 ? Math.min(...allScalars) : 0);
     const cMax = this.customRange?.max ?? (allScalars.length > 0 ? Math.max(...allScalars) : 1);
 
@@ -372,27 +330,28 @@ export class PostProcessor {
 
   /**
    * FEM 영역을 THREE.Mesh로 렌더링
-   * - HEX8 표면 추출 → 삼각형 메쉬
+   * - HEX8 표면 추출 → 삼각형 메쉬 (HEX8Utils.extractSurfaceTriangles)
    * - 노드 변위로 워프 (Warp by Vector)
-   * - 노드 스칼라로 vertex color
+   * - 노드 스칼라로 vertex color (ScalarMapper.getFEMNodeScalars)
+   * - ScalarMapper.isTriangleVisible 로 임계값/클리핑 필터
    */
   private _renderFEMRegion(
     region: FEMRegionResult,
     cMin: number,
     cMax: number,
   ): number {
-    const { nodes, elements, displacements, stress } = region;
+    const { nodes, elements, displacements } = region;
 
     if (!nodes || !elements || nodes.length === 0) return 0;
 
-    // 표면 삼각형 추출
+    // 표면 삼각형 추출 (HEX8Utils)
     const surfaceTriangles = extractSurfaceTriangles(elements);
     if (surfaceTriangles.length === 0) return 0;
 
-    // 노드별 스칼라 값 계산
-    const nodeScalars = this._getFEMNodeScalars(region);
+    // 노드별 스칼라 값 계산 (ScalarMapper)
+    const nodeScalars = getFEMNodeScalars(region, this.mode, this.component);
 
-    // 변형된 노드 좌표 계산
+    // 변형된 노드 좌표 계산 (Warp by Vector)
     const deformedNodes: number[][] = nodes.map((pos, i) => {
       const d = displacements[i] || [0, 0, 0];
       return [
@@ -420,37 +379,17 @@ export class PostProcessor {
     const faceNormal = new THREE.Vector3();
 
     for (let t = 0; t < nTris; t++) {
-      const [ni0, ni1, ni2] = surfaceTriangles[t];
+      const tri = surfaceTriangles[t];
+
+      // 임계값 + 클리핑 필터 (ScalarMapper)
+      if (!isTriangleVisible(tri, deformedNodes, nodeScalars, this.threshold, this.clipConfig, this._bbox)) {
+        continue;
+      }
+
+      const [ni0, ni1, ni2] = tri;
       const p0 = deformedNodes[ni0];
       const p1 = deformedNodes[ni1];
       const p2 = deformedNodes[ni2];
-
-      if (!p0 || !p1 || !p2) continue;
-
-      // 임계값 필터 (삼각형의 평균 스칼라)
-      if (this.threshold.enabled) {
-        const avgScalar = (nodeScalars[ni0] + nodeScalars[ni1] + nodeScalars[ni2]) / 3;
-        if (avgScalar < this.threshold.lower || avgScalar > this.threshold.upper) {
-          continue;
-        }
-      }
-
-      // 클리핑 평면 필터 (삼각형 중심)
-      if (this.clipConfig.enabled) {
-        const cx = (p0[0] + p1[0] + p2[0]) / 3;
-        const cy = (p0[1] + p1[1] + p2[1]) / 3;
-        const cz = (p0[2] + p1[2] + p2[2]) / 3;
-        const center = [cx, cy, cz];
-        const axisIdx = this.clipConfig.axis === 'x' ? 0 : this.clipConfig.axis === 'y' ? 1 : 2;
-        const bboxMin = this._bbox.min.getComponent(axisIdx);
-        const bboxMax = this._bbox.max.getComponent(axisIdx);
-        const range = bboxMax - bboxMin || 1;
-        const clipPos = bboxMin + (this.clipConfig.position + 1) / 2 * range;
-        const pass = this.clipConfig.invert
-          ? center[axisIdx] < clipPos
-          : center[axisIdx] > clipPos;
-        if (!pass) continue;
-      }
 
       const offset = visibleTris * 9;
 
@@ -519,17 +458,19 @@ export class PostProcessor {
 
   /**
    * PD/SPG 영역을 THREE.Points로 렌더링
+   * - 스칼라 추출: ScalarMapper.getParticleScalars
+   * - 필터: ScalarMapper.applyPointFilters
    */
   private _renderParticleRegion(
     region: ParticleRegionResult,
     cMin: number,
     cMax: number,
   ): number {
-    const { positions, displacements, stress, damage } = region;
+    const { positions, displacements } = region;
 
     if (!positions || positions.length === 0) return 0;
 
-    // 변형 좌표 계산
+    // 변형 좌표 계산 (Warp by Vector)
     const deformed: number[][] = positions.map((pos, i) => {
       const d = displacements?.[i] || [0, 0, 0];
       return [
@@ -539,12 +480,12 @@ export class PostProcessor {
       ];
     });
 
-    // 스칼라 값 계산
-    const scalars = this._getParticleScalars(region);
+    // 스칼라 값 계산 (ScalarMapper)
+    const scalars = getParticleScalars(region, this.mode, this.component);
 
-    // 필터 적용
+    // 필터 적용 (ScalarMapper)
     const { positions: filteredPos, scalars: filteredScl } =
-      this._applyFilters(deformed, scalars);
+      applyPointFilters(deformed, scalars, this.threshold, this.clipConfig, this._bbox);
 
     if (filteredPos.length === 0) return 0;
 
@@ -602,10 +543,12 @@ export class PostProcessor {
 
     if (allPositions.length === 0) return 0;
 
-    const allScalars = this._getScalars();
+    const allScalars = getLegacyScalars(this.data!, this.mode, this.component);
     if (!allScalars || allScalars.length === 0) return 0;
 
-    const { positions, scalars } = this._applyFilters(allPositions, allScalars);
+    const { positions, scalars } = applyPointFilters(
+      allPositions, allScalars, this.threshold, this.clipConfig, this._bbox,
+    );
 
     if (positions.length === 0) return 0;
 
@@ -687,143 +630,8 @@ export class PostProcessor {
   }
 
   // ====================================================================
-  // FEM 노드 스칼라 추출
-  // ====================================================================
-
-  /**
-   * FEM 영역의 노드별 스칼라 값 (모드+컴포넌트별)
-   */
-  private _getFEMNodeScalars(region: FEMRegionResult): number[] {
-    switch (this.mode) {
-      case 'displacement':
-        return this._extractComponent(region.displacements);
-      case 'stress':
-        return region.stress || [];
-      case 'damage':
-        return new Array(region.nodes.length).fill(0);
-      default:
-        return [];
-    }
-  }
-
-  // ====================================================================
-  // 입자 스칼라 추출
-  // ====================================================================
-
-  /**
-   * PD/SPG 영역의 입자별 스칼라 값
-   */
-  private _getParticleScalars(region: ParticleRegionResult): number[] {
-    switch (this.mode) {
-      case 'displacement':
-        return this._extractComponent(region.displacements || []);
-      case 'stress':
-        return region.stress || [];
-      case 'damage':
-        return region.damage || [];
-      default:
-        return [];
-    }
-  }
-
-  // ====================================================================
   // 내부 메서드
   // ====================================================================
-
-  /**
-   * 모든 영역의 스칼라 값 통합 (범위 계산용)
-   */
-  private _getAllScalars(): number[] {
-    if (!this.data) return [];
-
-    const all: number[] = [];
-
-    // FEM 영역
-    if (this.data.fem_regions) {
-      for (const r of this.data.fem_regions) {
-        all.push(...this._getFEMNodeScalars(r));
-      }
-    }
-
-    // 입자 영역
-    if (this.data.particle_regions) {
-      for (const r of this.data.particle_regions) {
-        all.push(...this._getParticleScalars(r));
-      }
-    }
-
-    // 레거시
-    if (!this.data.fem_regions && !this.data.particle_regions) {
-      const s = this._getScalars();
-      if (s) all.push(...s);
-    }
-
-    return all;
-  }
-
-  private _computeStats(): void {
-    if (!this.data) return;
-
-    const allScalars = this._getAllScalars();
-
-    // 변위 통계
-    this.stats.maxDisp = 0;
-    this.stats.minDisp = Infinity;
-    if (this.data.fem_regions) {
-      for (const r of this.data.fem_regions) {
-        for (const d of r.displacements) {
-          const mag = Math.sqrt(d[0] ** 2 + d[1] ** 2 + (d[2] || 0) ** 2);
-          if (mag > this.stats.maxDisp) this.stats.maxDisp = mag;
-          if (mag < this.stats.minDisp) this.stats.minDisp = mag;
-        }
-      }
-    }
-    if (this.data.particle_regions) {
-      for (const r of this.data.particle_regions) {
-        for (const d of (r.displacements || [])) {
-          const mag = Math.sqrt(d[0] ** 2 + d[1] ** 2 + (d[2] || 0) ** 2);
-          if (mag > this.stats.maxDisp) this.stats.maxDisp = mag;
-          if (mag < this.stats.minDisp) this.stats.minDisp = mag;
-        }
-      }
-    }
-    // 레거시 폴백
-    if (!this.data.fem_regions && !this.data.particle_regions) {
-      const { displacements } = this.data;
-      if (displacements?.length > 0) {
-        for (const d of displacements) {
-          const mag = Math.sqrt(d[0] ** 2 + d[1] ** 2 + (d[2] || 0) ** 2);
-          if (mag > this.stats.maxDisp) this.stats.maxDisp = mag;
-          if (mag < this.stats.minDisp) this.stats.minDisp = mag;
-        }
-      }
-    }
-    if (this.stats.minDisp === Infinity) this.stats.minDisp = 0;
-
-    // 응력/손상 통계
-    this.stats.maxStress = 0;
-    this.stats.minStress = 0;
-    this.stats.maxDamage = 0;
-    this.stats.minDamage = 0;
-
-    if (allScalars.length > 0 && this.mode === 'stress') {
-      this.stats.maxStress = Math.max(...allScalars);
-      this.stats.minStress = Math.min(...allScalars);
-    }
-    if (allScalars.length > 0 && this.mode === 'damage') {
-      this.stats.maxDamage = Math.max(...allScalars);
-      this.stats.minDamage = Math.min(...allScalars);
-    }
-
-    // 현재 모드 범위 업데이트
-    if (allScalars.length > 0) {
-      this.stats.currentMin = Math.min(...allScalars);
-      this.stats.currentMax = Math.max(...allScalars);
-    } else {
-      this.stats.currentMin = 0;
-      this.stats.currentMax = 0;
-    }
-  }
 
   /**
    * 바운딩 박스 계산 (클리핑 정규화용)
@@ -879,96 +687,6 @@ export class PostProcessor {
     }
 
     return disps;
-  }
-
-  /**
-   * 레거시: 현재 모드 + 컴포넌트에 맞는 스칼라 배열 반환
-   */
-  private _getScalars(): number[] | null {
-    if (!this.data) return null;
-
-    switch (this.mode) {
-      case 'displacement': {
-        const disps = this.data.displacements;
-        return this._extractComponent(disps);
-      }
-      case 'stress': {
-        const stress = this.data.stress;
-        if (!stress || stress.length === 0) return null;
-        if (typeof stress[0] === 'number') {
-          return stress as number[];
-        }
-        return this._extractComponent(stress as number[][]);
-      }
-      case 'damage': {
-        return this.data.damage || [];
-      }
-      default:
-        return null;
-    }
-  }
-
-  /**
-   * 벡터 데이터에서 컴포넌트 추출
-   */
-  private _extractComponent(vectors: number[][]): number[] {
-    switch (this.component) {
-      case 'x':
-        return vectors.map(v => v[0] || 0);
-      case 'y':
-        return vectors.map(v => v[1] || 0);
-      case 'z':
-        return vectors.map(v => v[2] || 0);
-      case 'magnitude':
-      default:
-        return vectors.map(v =>
-          Math.sqrt((v[0] || 0) ** 2 + (v[1] || 0) ** 2 + (v[2] || 0) ** 2),
-        );
-    }
-  }
-
-  /**
-   * 임계값 + 클리핑 필터 적용 (포인트용)
-   */
-  private _applyFilters(
-    positions: number[][],
-    scalars: number[],
-  ): { positions: number[][]; scalars: number[] } {
-    const n = Math.min(positions.length, scalars.length);
-    const filteredPos: number[][] = [];
-    const filteredScl: number[] = [];
-
-    for (let i = 0; i < n; i++) {
-      const val = scalars[i];
-
-      // 임계값 필터
-      if (this.threshold.enabled) {
-        if (val < this.threshold.lower || val > this.threshold.upper) {
-          continue;
-        }
-      }
-
-      // 클리핑 평면 필터
-      if (this.clipConfig.enabled) {
-        const pos = positions[i];
-        const axisIdx = this.clipConfig.axis === 'x' ? 0 : this.clipConfig.axis === 'y' ? 1 : 2;
-        const bboxMin = this._bbox.min.getComponent(axisIdx);
-        const bboxMax = this._bbox.max.getComponent(axisIdx);
-        const range = bboxMax - bboxMin || 1;
-        const clipPos = bboxMin + (this.clipConfig.position + 1) / 2 * range;
-
-        const pass = this.clipConfig.invert
-          ? pos[axisIdx] < clipPos
-          : pos[axisIdx] > clipPos;
-
-        if (!pass) continue;
-      }
-
-      filteredPos.push(positions[i]);
-      filteredScl.push(val);
-    }
-
-    return { positions: filteredPos, scalars: filteredScl };
   }
 
   /**

@@ -9,10 +9,10 @@
   const tabs: { id: TabId; label: string }[] = [
     { id: 'file', label: 'File' },
     { id: 'modeling', label: 'Modeling' },
+    { id: 'material', label: 'Material' },
     { id: 'preprocess', label: 'Pre-process' },
     { id: 'solve', label: 'Solve' },
     { id: 'postprocess', label: 'Post-process' },
-    { id: 'view', label: 'View' },
   ];
 
   function setTab(id: TabId) {

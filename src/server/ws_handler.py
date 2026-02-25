@@ -1,4 +1,12 @@
-"""WebSocket 핸들러 — 해석/세그멘테이션/메쉬추출 요청 수신, 진행률 전송, 결과 반환."""
+"""WebSocket 핸들러 — 해석/세그멘테이션/메쉬추출 요청 수신, 진행률 전송, 결과 반환.
+
+역할: 순수 WS 디스패처. 비즈니스 로직은 services/ 패키지에 위임.
+
+기능:
+  - 해석 요청 (run_analysis) + 결과/진행률 전송
+  - 해석 취소 (cancel_analysis) — asyncio.Task 기반
+  - DICOM 파이프라인, 세그멘테이션, 메쉬추출 등
+"""
 
 import json
 import asyncio
@@ -8,7 +16,11 @@ from fastapi import WebSocket, WebSocketDisconnect
 from .models import (
     AnalysisRequest, SegmentationRequest, MeshExtractRequest,
     AutoMaterialRequest, DicomPipelineRequest,
+    ImplantMeshRequest, GuidelineRequest,
 )
+
+# 실행 중인 해석 태스크 추적 (request_id → asyncio.Task)
+_running_tasks: dict[str, asyncio.Task] = {}
 
 
 async def handle_websocket(ws: WebSocket):
@@ -21,17 +33,21 @@ async def handle_websocket(ws: WebSocket):
             {"type": "extract_meshes",      "data": MeshExtractRequest}
             {"type": "auto_material",       "data": AutoMaterialRequest}
             {"type": "run_dicom_pipeline",  "data": DicomPipelineRequest}
+            {"type": "get_implant_mesh",    "data": ImplantMeshRequest}
+            {"type": "get_guideline_meshes","data": GuidelineRequest}
             {"type": "ping"}
 
         서버 → 클라이언트:
-            {"type": "progress",           "data": {"step": "...", ...}}
-            {"type": "result",             "data": {...}}
-            {"type": "segment_result",     "data": {labels_path, n_labels, ...}}
-            {"type": "meshes_result",      "data": {meshes: [...]}}
-            {"type": "material_result",    "data": {materials: [...]}}
-            {"type": "pipeline_step",      "data": {step, ...}}
-            {"type": "pipeline_result",    "data": {meshes: [...]}}
-            {"type": "error",              "data": {"message": "..."}}
+            {"type": "progress",               "data": {"step": "...", ...}}
+            {"type": "result",                 "data": {...}}
+            {"type": "segment_result",         "data": {labels_path, n_labels, ...}}
+            {"type": "meshes_result",          "data": {meshes: [...]}}
+            {"type": "material_result",        "data": {materials: [...]}}
+            {"type": "pipeline_step",          "data": {step, ...}}
+            {"type": "pipeline_result",        "data": {meshes: [...]}}
+            {"type": "implant_mesh_result",    "data": {name, implant_type, vertices, faces, color}}
+            {"type": "guideline_meshes_result","data": {vertebra_name, meshes: [...]}}
+            {"type": "error",                  "data": {"message": "..."}}
     """
     await ws.accept()
 
@@ -43,6 +59,8 @@ async def handle_websocket(ws: WebSocket):
 
             if msg_type == "run_analysis":
                 await _handle_analysis(ws, msg.get("data", {}))
+            elif msg_type == "cancel_analysis":
+                await _handle_cancel(ws, msg.get("data", {}))
             elif msg_type == "segment":
                 await _handle_segment(ws, msg.get("data", {}))
             elif msg_type == "extract_meshes":
@@ -51,6 +69,10 @@ async def handle_websocket(ws: WebSocket):
                 await _handle_auto_material(ws, msg.get("data", {}))
             elif msg_type == "run_dicom_pipeline":
                 await _handle_dicom_pipeline(ws, msg.get("data", {}))
+            elif msg_type == "get_implant_mesh":
+                await _handle_implant_mesh(ws, msg.get("data", {}))
+            elif msg_type == "get_guideline_meshes":
+                await _handle_guideline_meshes(ws, msg.get("data", {}))
             elif msg_type == "ping":
                 await ws.send_json({"type": "pong"})
             else:
@@ -74,7 +96,7 @@ async def handle_websocket(ws: WebSocket):
 # ── 진행률 콜백 헬퍼 ──
 
 def _make_progress_callback(ws: WebSocket, loop):
-    """동기 → 비동기 진행률 콜백 생성."""
+    """동기 → 비동기 진행률 콜백 생성 (progress 타입)."""
     async def _send(step: str, detail: dict):
         await ws.send_json({
             "type": "progress",
@@ -87,9 +109,23 @@ def _make_progress_callback(ws: WebSocket, loop):
     return callback
 
 
+def _make_pipeline_step_callback(ws: WebSocket, loop):
+    """동기 → 비동기 파이프라인 단계 콜백 생성 (pipeline_step 타입)."""
+    async def _send(step: str, detail: dict):
+        await ws.send_json({
+            "type": "pipeline_step",
+            "data": {"step": step, **detail},
+        })
+
+    def callback(step: str, detail: dict):
+        asyncio.run_coroutine_threadsafe(_send(step, detail), loop)
+
+    return callback
+
+
 async def _run_in_thread(ws, result_type, func, *args):
     """블로킹 함수를 스레드풀에서 실행 후 결과 전송."""
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()  # Python 3.10+ 권장: 현재 실행 중인 루프 반환
     progress_callback = _make_progress_callback(ws, loop)
 
     try:
@@ -111,7 +147,12 @@ async def _run_in_thread(ws, result_type, func, *args):
 # ── 명령 핸들러 ──
 
 async def _handle_analysis(ws: WebSocket, data: dict):
-    """해석 요청 처리."""
+    """해석 요청 처리.
+
+    request_id가 있으면 asyncio.Task로 실행해 나중에 취소 가능.
+    """
+    request_id = data.pop("request_id", None)
+
     try:
         request = AnalysisRequest(**data)
     except Exception as e:
@@ -121,8 +162,42 @@ async def _handle_analysis(ws: WebSocket, data: dict):
         })
         return
 
-    from .analysis_pipeline import run_analysis
-    await _run_in_thread(ws, "result", run_analysis, request)
+    from .services.analysis import run_analysis
+
+    async def _run():
+        try:
+            await _run_in_thread(ws, "result", run_analysis, request)
+        except asyncio.CancelledError:
+            # 취소됨 — cancelled 메시지 전송
+            await ws.send_json({
+                "type": "cancelled",
+                "data": {"request_id": request_id or ""},
+            })
+        finally:
+            if request_id and request_id in _running_tasks:
+                del _running_tasks[request_id]
+
+    task = asyncio.create_task(_run())
+    if request_id:
+        _running_tasks[request_id] = task
+
+
+async def _handle_cancel(ws: WebSocket, data: dict):
+    """해석 취소 요청 처리."""
+    request_id = data.get("request_id")
+    if not request_id:
+        return
+
+    task = _running_tasks.get(request_id)
+    if task and not task.done():
+        task.cancel()
+        # cancelled 메시지는 task 정리 시 전송됨
+    else:
+        # 이미 완료됐거나 존재하지 않는 요청
+        await ws.send_json({
+            "type": "cancelled",
+            "data": {"request_id": request_id},
+        })
 
 
 async def _handle_segment(ws: WebSocket, data: dict):
@@ -136,7 +211,7 @@ async def _handle_segment(ws: WebSocket, data: dict):
         })
         return
 
-    from .segmentation_pipeline import run_segmentation
+    from .services.segmentation import run_segmentation
     await _run_in_thread(ws, "segment_result", run_segmentation, request)
 
 
@@ -151,7 +226,7 @@ async def _handle_extract_meshes(ws: WebSocket, data: dict):
         })
         return
 
-    from .mesh_extract_pipeline import extract_meshes
+    from .services.mesh_extract import extract_meshes
     await _run_in_thread(ws, "meshes_result", extract_meshes, request)
 
 
@@ -166,12 +241,15 @@ async def _handle_auto_material(ws: WebSocket, data: dict):
         })
         return
 
-    from .auto_material import auto_assign_materials
+    from .services.auto_material import auto_assign_materials
     await _run_in_thread(ws, "material_result", auto_assign_materials, request)
 
 
 async def _handle_dicom_pipeline(ws: WebSocket, data: dict):
-    """DICOM 원클릭 파이프라인: 변환 → 세그멘테이션 → 메쉬 추출."""
+    """DICOM 원클릭 파이프라인 — 변환 → 세그멘테이션 → 메쉬 추출.
+
+    pipeline_step 메시지 타입으로 단계별 진행 상황 전송.
+    """
     try:
         request = DicomPipelineRequest(**data)
     except Exception as e:
@@ -181,101 +259,17 @@ async def _handle_dicom_pipeline(ws: WebSocket, data: dict):
         })
         return
 
-    loop = asyncio.get_event_loop()
-
-    async def send_step(step: str, detail: dict):
-        await ws.send_json({"type": "pipeline_step", "data": {"step": step, **detail}})
-
-    def progress_cb(step: str, detail: dict):
-        asyncio.run_coroutine_threadsafe(send_step(step, detail), loop)
+    loop = asyncio.get_running_loop()  # Python 3.10+ 권장: 현재 실행 중인 루프 반환
+    # pipeline_step 타입으로 전송하는 전용 콜백
+    step_callback = _make_pipeline_step_callback(ws, loop)
 
     try:
-        # 1단계: DICOM → NIfTI 변환
-        await send_step("dicom_convert", {"message": "DICOM 변환 시작...", "phase": 1})
-
-        from .dicom_converter import convert_dicom_to_nifti
-        convert_result = await loop.run_in_executor(
+        from .services.dicom_pipeline import run_dicom_pipeline
+        result = await loop.run_in_executor(
             None,
-            lambda: convert_dicom_to_nifti(
-                request.dicom_dir,
-                progress_callback=progress_cb,
-            ),
+            lambda: run_dicom_pipeline(request, progress_callback=step_callback),
         )
-        nifti_path = convert_result["nifti_path"]
-
-        await send_step("dicom_convert_done", {
-            "message": "DICOM 변환 완료",
-            "nifti_path": nifti_path,
-            "phase": 1,
-            **convert_result,
-        })
-
-        # 2단계: 세그멘테이션 (modality 자동 감지)
-        patient_info = convert_result.get("patient_info", {})
-        dicom_modality = patient_info.get("modality", "").upper().strip()
-
-        # DICOM modality → 엔진/modality 자동 선택
-        # TotalSpineSeg: CT/MRI 모두 지원 (척추골+디스크+척수+척추관)
-        engine = request.engine
-        modality = request.modality
-        if engine == "auto":
-            engine = "totalspineseg"
-            if dicom_modality == "MR":
-                modality = modality or "mri"
-            else:
-                modality = modality or "ct"
-
-        await send_step("segmentation", {
-            "message": f"세그멘테이션 시작 (엔진: {engine}, modality: {dicom_modality or 'unknown'})...",
-            "phase": 2,
-        })
-
-        from .segmentation_pipeline import run_segmentation
-        seg_request = SegmentationRequest(
-            input_path=nifti_path,
-            engine=engine,
-            device=request.device,
-            fast=request.fast,
-            modality=modality,
-        )
-        seg_result = await loop.run_in_executor(
-            None,
-            lambda: run_segmentation(seg_request, progress_callback=progress_cb),
-        )
-
-        await send_step("segmentation_done", {
-            "message": f"세그멘테이션 완료: {seg_result['n_labels']}개 라벨",
-            "labels_path": seg_result["labels_path"],
-            "phase": 2,
-            **seg_result,
-        })
-
-        # 3단계: 메쉬 추출
-        await send_step("mesh_extract", {"message": "3D 모델 생성 시작...", "phase": 3})
-
-        from .mesh_extract_pipeline import extract_meshes
-        mesh_request = MeshExtractRequest(
-            labels_path=seg_result["labels_path"],
-            resolution=request.resolution,
-            smooth=request.smooth,
-        )
-        mesh_result = await loop.run_in_executor(
-            None,
-            lambda: extract_meshes(mesh_request, progress_callback=progress_cb),
-        )
-
-        # 최종 결과 전송
-        await ws.send_json({
-            "type": "pipeline_result",
-            "data": {
-                "meshes": mesh_result["meshes"],
-                "nifti_path": nifti_path,
-                "labels_path": seg_result["labels_path"],
-                "seg_info": seg_result.get("label_info", []),
-                "patient_info": convert_result.get("patient_info", {}),
-            },
-        })
-
+        await ws.send_json({"type": "pipeline_result", "data": result})
     except Exception as e:
         await ws.send_json({
             "type": "error",
@@ -284,3 +278,33 @@ async def _handle_dicom_pipeline(ws: WebSocket, data: dict):
                 "traceback": traceback.format_exc(),
             },
         })
+
+
+async def _handle_implant_mesh(ws: WebSocket, data: dict):
+    """임플란트 3D 메쉬 생성 요청 처리."""
+    try:
+        request = ImplantMeshRequest(**data)
+    except Exception as e:
+        await ws.send_json({
+            "type": "error",
+            "data": {"message": f"임플란트 요청 파싱 실패: {e}"},
+        })
+        return
+
+    from .services.implants import generate_implant_mesh
+    await _run_in_thread(ws, "implant_mesh_result", generate_implant_mesh, request)
+
+
+async def _handle_guideline_meshes(ws: WebSocket, data: dict):
+    """수술 가이드라인 메쉬 생성 요청 처리."""
+    try:
+        request = GuidelineRequest(**data)
+    except Exception as e:
+        await ws.send_json({
+            "type": "error",
+            "data": {"message": f"가이드라인 요청 파싱 실패: {e}"},
+        })
+        return
+
+    from .services.guideline import generate_guideline_meshes
+    await _run_in_thread(ws, "guideline_meshes_result", generate_guideline_meshes, request)

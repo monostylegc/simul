@@ -7,6 +7,8 @@ TotalSegmentator(CT), TotalSpineSeg(MRI) 등 다양한 세그멘테이션 도구
 from enum import IntEnum
 from typing import Literal
 
+import numpy as np
+
 
 class SpineLabel(IntEnum):
     """척추 구조 통합 라벨.
@@ -221,6 +223,127 @@ TOTALSPINESEG_TO_STANDARD: dict[int, int] = {
     200: SpineLabel.SPINAL_CORD,
     201: SpineLabel.SPINAL_CANAL,
 }
+
+# TotalSpineSeg step1_levels 레벨 값 → SpineLabel 매핑
+# step1_levels는 1-based 연속 정수: C1=1, C2=2, ..., C7=7, T1=8, ..., T12=19, L1=20, ..., L5=24, SACRUM=25
+LEVEL_TO_VERTEBRA: dict[int, int] = {
+    1: SpineLabel.C1, 2: SpineLabel.C2, 3: SpineLabel.C3,
+    4: SpineLabel.C4, 5: SpineLabel.C5, 6: SpineLabel.C6, 7: SpineLabel.C7,
+    8: SpineLabel.T1, 9: SpineLabel.T2, 10: SpineLabel.T3,
+    11: SpineLabel.T4, 12: SpineLabel.T5, 13: SpineLabel.T6,
+    14: SpineLabel.T7, 15: SpineLabel.T8, 16: SpineLabel.T9,
+    17: SpineLabel.T10, 18: SpineLabel.T11, 19: SpineLabel.T12,
+    20: SpineLabel.L1, 21: SpineLabel.L2, 22: SpineLabel.L3,
+    23: SpineLabel.L4, 24: SpineLabel.L5,
+    25: SpineLabel.SACRUM,
+}
+
+
+def build_dynamic_totalspineseg_mapping(
+    step1_levels_data: np.ndarray,
+    step2_data: np.ndarray,
+) -> dict[int, int]:
+    """TotalSpineSeg step1_levels와 step2_output을 이용한 동적 라벨 매핑 생성.
+
+    TotalSpineSeg는 step2에서 척추골 형태는 정확히 분할하지만,
+    어떤 레벨인지(L1? L4?) 식별이 부정확할 수 있다.
+    step1_levels에는 각 레벨의 정확한 위치 마커(1 voxel)가 있으므로,
+    이를 이용하여 step2 raw 라벨을 올바른 SpineLabel로 매핑한다.
+
+    Args:
+        step1_levels_data: step1_levels NIfTI 데이터 (레벨 마커, 각 1 voxel)
+        step2_data: step2_output NIfTI 데이터 (세그멘테이션 결과)
+
+    Returns:
+        step2 raw label → SpineLabel 매핑 딕셔너리
+    """
+    mapping: dict[int, int] = {}
+
+    # 1. step1_levels에서 레벨→Z위치 매핑 추출
+    level_markers: dict[int, float] = {}
+    for level_val in np.unique(step1_levels_data):
+        level_val = int(level_val)
+        if level_val == 0:
+            continue
+        coords = np.argwhere(step1_levels_data == level_val)
+        level_markers[level_val] = float(coords.mean(axis=0)[2])  # Z centroid
+
+    if not level_markers:
+        return {}
+
+    # 2. step2에서 척추골 raw 라벨의 Z centroid 계산 (11~50 범위)
+    vert_raws: list[tuple[int, float]] = []
+    for raw_lbl in np.unique(step2_data):
+        raw_lbl = int(raw_lbl)
+        if raw_lbl == 0:
+            continue
+        if 11 <= raw_lbl <= 50:
+            coords = np.argwhere(step2_data == raw_lbl)
+            z = float(coords.mean(axis=0)[2])
+            vert_raws.append((raw_lbl, z))
+
+    # 3. Z 기준 내림차순 정렬 (상부 → 하부, 높은 Z = 상부)
+    vert_raws.sort(key=lambda x: -x[1])
+    levels_sorted = sorted(level_markers.items(), key=lambda x: -x[1])
+
+    # 4. 순서 기반 1:1 매칭 (상부부터 순서대로)
+    for i, (raw_lbl, _raw_z) in enumerate(vert_raws):
+        if i < len(levels_sorted):
+            level_val, _ = levels_sorted[i]
+            spine_label = LEVEL_TO_VERTEBRA.get(level_val)
+            if spine_label is not None:
+                mapping[raw_lbl] = spine_label
+            else:
+                mapping[raw_lbl] = SpineLabel.SACRUM
+        else:
+            # 레벨 마커보다 더 많은 척추골 → 하부 천골로 매핑
+            mapping[raw_lbl] = SpineLabel.SACRUM
+
+    # 5. 디스크 매핑: 순서 기반 매칭
+    # 디스크와 인접 레벨 간극을 각각 Z 내림차순 정렬 후 1:1 매칭
+    # (위치 범위 검사 대신 순서 사용 → 경계값 오차에 강건)
+    disc_raws: list[tuple[int, float]] = []
+    for raw_lbl in np.unique(step2_data):
+        raw_lbl = int(raw_lbl)
+        if raw_lbl == 0:
+            continue
+        # 디스크 범위: 63~99 (100은 SPINAL_CANAL이므로 제외)
+        if 63 <= raw_lbl <= 99:
+            coords = np.argwhere(step2_data == raw_lbl)
+            z = float(coords.mean(axis=0)[2])
+            disc_raws.append((raw_lbl, z))
+
+    disc_raws.sort(key=lambda x: -x[1])  # Z 내림차순 (상부 → 하부)
+
+    # 인접 레벨 간극 목록 생성 (이미 내림차순)
+    # 디스크 SpineLabel = 199 + upper_level (예: L1L2 = 199 + 20 = 219)
+    gaps: list[int | None] = []
+    for j in range(len(levels_sorted) - 1):
+        upper_level, _ = levels_sorted[j]
+        disc_spine_val = 199 + upper_level
+        try:
+            SpineLabel(disc_spine_val)  # 유효성 검증
+            gaps.append(disc_spine_val)
+        except ValueError:
+            gaps.append(None)
+
+    # 순서 기반 1:1 매칭 (상부 디스크 → 상부 간극)
+    for i, (disc_raw, _disc_z) in enumerate(disc_raws):
+        if i < len(gaps) and gaps[i] is not None:
+            mapping[disc_raw] = gaps[i]
+
+    # 6. 연조직은 정적 매핑 유지
+    _soft_tissue_static = {
+        100: SpineLabel.SPINAL_CANAL,
+        200: SpineLabel.SPINAL_CORD,
+        201: SpineLabel.SPINAL_CANAL,
+    }
+    for raw_lbl in np.unique(step2_data):
+        raw_lbl = int(raw_lbl)
+        if raw_lbl in _soft_tissue_static and raw_lbl not in mapping:
+            mapping[raw_lbl] = _soft_tissue_static[raw_lbl]
+
+    return mapping
 
 
 # nnU-Net SpineUnified 라벨 → SpineLabel 매핑

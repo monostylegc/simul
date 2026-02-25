@@ -1,9 +1,0 @@
-# 테스트 스크린샷
-*.png
-
-# 테스트 스크립트
-test_*.py
-
-# Python cache
-__pycache__/
-*.pyc

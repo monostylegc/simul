@@ -10,6 +10,7 @@ import { analysisState } from '$lib/stores/analysis.svelte';
 import { wsState } from '$lib/stores/websocket.svelte';
 import { uiState } from '$lib/stores/ui.svelte';
 import { PreProcessor } from '$lib/analysis/PreProcessor';
+import type { ResolvedMaterial } from '$lib/analysis/PreProcessor';
 import { PostProcessor } from '$lib/analysis/PostProcessor';
 import type { PostProcessMode, VectorComponent } from '$lib/analysis/PostProcessor';
 import type { ColormapName } from '$lib/analysis/colormap';
@@ -47,10 +48,14 @@ export async function initAnalysis(): Promise<void> {
     wsState.client = client;
 
     client.onConnect(() => wsState.setConnected(true));
-    client.onDisconnect(() => wsState.setConnected(false));
+    client.onDisconnect(() => {
+      wsState.setConnected(false);
+      wsState.reconnectAttempt++;
+    });
     client.onProgress(_onProgress);
     client.onResult(_onResult);
     client.onError(_onError);
+    client.onCancelled(_onCancelled);
 
     client.connect();
   }
@@ -58,25 +63,46 @@ export async function initAnalysis(): Promise<void> {
 
 /**
  * 해석 실행
+ *
+ * 1. 종합 검증 (canRun, validationErrors)
+ * 2. buildAnalysisRequest 조립 (null 반환 시 중단)
+ * 3. 서버 전송 + 타이머 시작
  */
 export async function runAnalysis(): Promise<void> {
   const pre = analysisState.preProcessor;
   const client = wsState.client;
 
+  // ── 연결 검증 ──
   if (!pre || !client?.connected) {
-    uiState.statusMessage = 'Analysis not ready (check connection)';
+    uiState.toast('서버에 연결되지 않았거나 전처리기가 초기화되지 않았습니다', 'error');
     return;
   }
 
-  // 요청 조립
+  // ── 종합 검증 ──
+  const errors = analysisState.validationErrors;
+  if (errors.length > 0) {
+    uiState.toast(`해석 불가: ${errors.join(', ')}`, 'error');
+    return;
+  }
+
+  // 상태 초기화
+  analysisState.lastError = null;
+  analysisState.elapsedMs = 0;
+  const startTime = Date.now();
+
+  // 요청 조립 (검증 실패 시 null 반환)
   const request = pre.buildAnalysisRequest(analysisState.method);
+  if (!request) {
+    // buildAnalysisRequest 내부에서 toast를 표시함
+    return;
+  }
 
   // FEM은 materials에 nodes가 있으므로 positions가 빈 배열일 수 있음
   const hasFEM = request.materials.some(m => m.method === 'fem' && m.nodes && m.nodes.length > 0);
   const hasParticles = request.positions.length > 0;
 
   if (!hasFEM && !hasParticles) {
-    uiState.statusMessage = 'No mesh data or particles to analyze';
+    uiState.toast('해석할 메쉬 데이터 또는 입자가 없습니다', 'error');
     return;
   }
 
@@ -91,7 +117,28 @@ export async function runAnalysis(): Promise<void> {
   analysisState.progressMessage = 'Submitting analysis...';
   uiState.statusMessage = `Running ${analysisState.method.toUpperCase()} analysis...`;
 
-  client.send('run_analysis', request);
+  // 타이머 업데이트 (100ms 간격)
+  const timer = setInterval(() => {
+    if (analysisState.isRunning) {
+      analysisState.elapsedMs = Date.now() - startTime;
+    } else {
+      clearInterval(timer);
+    }
+  }, 100);
+
+  client.sendAnalysis(request);
+}
+
+/**
+ * 진행 중인 해석 취소
+ */
+export function cancelAnalysis(): void {
+  const client = wsState.client;
+  if (!client) return;
+  client.cancelAnalysis();
+  analysisState.isRunning = false;
+  analysisState.progressMessage = '';
+  uiState.toast('해석 취소 요청을 전송했습니다', 'info');
 }
 
 // ── BC 관리 ──
@@ -104,7 +151,17 @@ export function addFixedBC(): void {
 
 /** 하중 BC 추가 */
 export function addForceBC(force: number[]): void {
-  analysisState.preProcessor?.addForceBC(force);
+  const pre = analysisState.preProcessor;
+  if (!pre) return;
+
+  // Force BC 적용 전, 브러쉬 선택 영역 중심점을 먼저 저장한다.
+  // (addForceBC 내부에서 brushSelection이 초기화되므로 반드시 먼저 계산)
+  const centroid = pre.getBrushSelectionCentroid();
+  if (centroid) {
+    analysisState.forceBCOrigin = [centroid.x, centroid.y, centroid.z];
+  }
+
+  pre.addForceBC(force);
   analysisState.updateBCCount();
 }
 
@@ -120,9 +177,9 @@ export function clearAllBC(): void {
   analysisState.updateBCCount();
 }
 
-/** 재료 할당 */
-export function assignMaterial(meshName: string, presetKey: string): void {
-  analysisState.preProcessor?.assignMaterial(meshName, presetKey);
+/** 재료 할당 (확정된 물성치) */
+export function assignMaterial(meshName: string, material: ResolvedMaterial): void {
+  analysisState.preProcessor?.assignMaterial(meshName, material);
   analysisState.updateMaterialCount();
 }
 
@@ -301,6 +358,54 @@ export function showComparison(): void {
   }
 }
 
+// ── 결과 내보내기 (Step 7) ──
+
+/**
+ * 해석 결과를 CSV 파일로 다운로드.
+ *
+ * 열: node, dx, dy, dz, von_mises_stress, damage
+ */
+export function exportResultsCSV(): void {
+  const pp = analysisState.postProcessor;
+  if (!pp || !pp.data) {
+    uiState.toast('내보낼 결과가 없습니다', 'warn');
+    return;
+  }
+
+  const { displacements, stress, damage, info } = pp.data;
+  const rows: string[] = ['node,dx,dy,dz,von_mises_stress,damage'];
+
+  const nParticles = displacements?.length ?? 0;
+  for (let i = 0; i < nParticles; i++) {
+    const d = displacements?.[i] ?? [0, 0, 0];
+    // stress는 1D(von Mises) 또는 2D(텐서) 형태 가능
+    let s = 0;
+    if (Array.isArray(stress)) {
+      const sv = stress[i];
+      s = typeof sv === 'number' ? sv : (Array.isArray(sv) ? sv[0] : 0);
+    }
+    const dmg = damage?.[i] ?? 0;
+    rows.push(`${i},${d[0]},${d[1]},${d[2]},${s},${dmg}`);
+  }
+
+  const csv = rows.join('\n');
+  const method = info?.method ?? 'unknown';
+  const filename = `analysis_${method}_${nParticles}pts.csv`;
+  _downloadBlob(csv, filename, 'text/csv');
+  uiState.toast(`CSV 내보내기 완료: ${filename}`, 'success');
+}
+
+/** Blob → 브라우저 다운로드 */
+function _downloadBlob(content: string, filename: string, mimeType: string): void {
+  const blob = new Blob([content], { type: mimeType });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
 // ── 내부 콜백 ──
 
 function _onProgress(data: ProgressData): void {
@@ -311,6 +416,7 @@ function _onProgress(data: ProgressData): void {
 function _onResult(data: AnalysisResultData): void {
   analysisState.isRunning = false;
   analysisState.hasResult = true;
+  analysisState.lastError = null;
   analysisState.postProcessor?.loadResults(data);
 
   // 결과 로드 후 스토어 동기화
@@ -323,13 +429,25 @@ function _onResult(data: AnalysisResultData): void {
     analysisState.thresholdUpper = pp.stats.currentMax;
   }
 
-  uiState.statusMessage = `Analysis complete (${data.info?.method})`;
+  const elapsed = (analysisState.elapsedMs / 1000).toFixed(1);
+  uiState.statusMessage = `Analysis complete (${data.info?.method}) — ${elapsed}s`;
+  uiState.toast(`해석 완료 (${elapsed}초)`, 'success');
   uiState.activeTab = 'postprocess';
+}
+
+function _onCancelled(_data: { request_id: string }): void {
+  analysisState.isRunning = false;
+  analysisState.progressMessage = '';
+  analysisState.lastError = '사용자가 해석을 취소했습니다';
+  uiState.statusMessage = 'Analysis cancelled';
+  uiState.toast('해석이 취소되었습니다', 'warn');
 }
 
 function _onError(data: ErrorData): void {
   analysisState.isRunning = false;
   analysisState.progressMessage = '';
+  analysisState.lastError = data.message;
   uiState.statusMessage = `Analysis error: ${data.message}`;
+  uiState.toast(`해석 실패: ${data.message}`, 'error');
   console.error('해석 에러:', data.message);
 }

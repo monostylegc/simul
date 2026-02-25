@@ -118,7 +118,14 @@ class Domain:
             self._force_values = forces
 
     def get_positions(self) -> np.ndarray:
-        """참조 좌표 반환."""
+        """참조 좌표 반환.
+
+        _custom_positions 가 설정된 경우 이를 우선 반환한다.
+        (복셀 기반 PD/SPG 파이프라인에서 실제 입자 좌표를 select() 등에서 사용)
+        """
+        custom = getattr(self, "_custom_positions", None)
+        if custom is not None:
+            return custom
         if self._positions is not None:
             return self._positions
         raise RuntimeError("도메인이 아직 초기화되지 않음")
@@ -217,6 +224,62 @@ def _create_fem_positions(
                 for i in range(nx + 1):
                     nodes.append([ox + i * dx, oy + j * dy, oz + k * dz])
         return np.array(nodes, dtype=np.float64)
+
+
+def create_particle_domain(
+    positions: np.ndarray,
+    method: Method,
+    **kwargs,
+) -> Domain:
+    """입자 좌표 배열로부터 PD/SPG 도메인을 직접 생성한다.
+
+    복셀 기반 입자 좌표를 도메인에 등록하여 균등 그리드와의 좌표 불일치를 방지한다.
+    내부적으로 create_domain → _custom_positions 설정 패턴을 캡슐화한다.
+
+    사용 예::
+
+        domain = create_particle_domain(voxel_positions, method=Method.PD)
+        bottom = domain.select(axis=2, value=positions.min(axis=0)[2])
+        domain.set_fixed(bottom)
+
+    Args:
+        positions: 입자 좌표 (n_particles, dim)
+        method: 해석 방법 (Method.PD 또는 Method.SPG)
+        **kwargs: 추가 옵션 (horizon_factor, support_factor 등)
+
+    Returns:
+        _custom_positions 가 설정된 Domain 객체.
+        get_positions() / select() 가 실제 입자 좌표를 기준으로 동작한다.
+    """
+    positions = np.asarray(positions, dtype=np.float64)
+    n_particles, dim = positions.shape
+
+    # 바운딩 박스 계산
+    pos_min = positions.min(axis=0)
+    pos_max = positions.max(axis=0)
+    domain_size = pos_max - pos_min
+
+    # 최소 도메인 크기 보장 (단일 레이어 복셀 등 퇴화 케이스)
+    for d in range(dim):
+        if domain_size[d] < 1e-3:
+            domain_size[d] = 1e-3
+
+    origin = tuple(pos_min.tolist())
+    size = tuple(domain_size.tolist())
+
+    # 분할 수 추정 — 실제 입자 배치에는 사용 안 함 (horizon 계산 전용)
+    n_per_axis = max(2, int(round(n_particles ** (1.0 / dim))))
+    n_divisions = tuple([n_per_axis] * dim)
+
+    domain = create_domain(
+        method=method, dim=dim, origin=origin, size=size,
+        n_divisions=n_divisions, **kwargs,
+    )
+
+    # 실제 복셀 좌표 등록 — 어댑터가 감지해 initialize_from_arrays 사용
+    domain._custom_positions = positions.copy()
+
+    return domain
 
 
 def _create_particle_positions(

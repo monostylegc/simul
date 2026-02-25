@@ -5,7 +5,7 @@
  */
 
 /** 탭 타입 */
-export type TabId = 'file' | 'modeling' | 'preprocess' | 'solve' | 'postprocess' | 'view';
+export type TabId = 'file' | 'modeling' | 'material' | 'preprocess' | 'solve' | 'postprocess';
 
 /** 토스트 타입 */
 export type ToastLevel = 'info' | 'success' | 'error' | 'warn';

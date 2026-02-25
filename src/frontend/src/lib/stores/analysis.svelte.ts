@@ -97,6 +97,50 @@ class AnalysisState {
   /** 수술 전 결과 저장 여부 */
   hasPreOpResult = $state(false);
 
+  /**
+   * Force BC 적용 영역 무게 중심 좌표 [x, y, z].
+   * addForceBC() 호출 시 브러쉬 선택 영역 중심점으로 업데이트된다.
+   * 3D Force 화살표 기준점(origin)으로 사용한다.
+   */
+  forceBCOrigin = $state<[number, number, number] | null>(null);
+
+  /** 자동 추천 경계조건 목록 (파이프라인 완료 후 생성) */
+  suggestedBCs = $state<Array<{
+    meshName: string;
+    type: 'fixed' | 'force';
+    label: string;
+    magnitude?: number;
+    direction?: [number, number, number];
+    applied: boolean;
+  }>>([]);
+
+  /** 마지막 에러 메시지 */
+  lastError = $state<string | null>(null);
+
+  /** 해석 소요 시간(ms) */
+  elapsedMs = $state(0);
+
+  /** 해석 실행 가능 여부 (종합 검증) */
+  get canRun(): boolean {
+    return this.bcCount > 0
+      && !this.isRunning
+      && this.preProcessor !== null;
+  }
+
+  /**
+   * 검증 실패/경고 항목 목록.
+   * canRun === false인 원인을 사용자에게 안내할 때 사용.
+   */
+  get validationErrors(): string[] {
+    const errs: string[] = [];
+    if (!this.preProcessor) errs.push('전처리기 미초기화 (PreProcess 탭을 먼저 실행)');
+    if (this.bcCount === 0) errs.push('경계조건(BC)이 설정되지 않음');
+    // 고정 BC 필수 확인
+    const hasFixed = this.preProcessor?.boundaryConditions.some(bc => bc.type === 'fixed') ?? false;
+    if (this.bcCount > 0 && !hasFixed) errs.push('고정 경계조건(Fixed BC)이 없음');
+    return errs;
+  }
+
   /** 보이는 입자 수 */
   visibleCount = $state(0);
 
