@@ -14,11 +14,36 @@ CT 영상으로부터 수술 전 계획 수립: 나사/케이지 배치, 내시�
 # 의존성 설치 (uv 사용)
 uv sync
 
-# 웹 시뮬레이터 실행
-cd src/simulator && uv run python -m http.server 8080
+# 백엔드 실행
+uv run uvicorn backend.api.app:app --host 0.0.0.0 --port 8000 --reload
+
+# 프론트엔드 개발
+cd frontend && npm run dev
+
+# 프론트엔드 빌드
+cd frontend && npm run build
 
 # 테스트 실행
-uv run pytest src/ -v
+uv run pytest backend/ -v
+```
+
+## Project Structure
+
+```
+pysim/
+├── frontend/          # Svelte 프론트엔드
+│   ├── src/
+│   ├── public/stl/    # STL 에셋
+│   └── dist/          # 빌드 출력
+├── backend/           # Python 백엔드
+│   ├── utils/         # 유틸리티 (L0)
+│   ├── segmentation/  # CT 세그멘테이션 (L1)
+│   ├── fea/           # 유한요소/PD/SPG 해석 (L2)
+│   ├── preprocessing/ # 범용 전처리 (L2.5a)
+│   ├── anatomy/       # 부위별 특화 로직 (L2.5b)
+│   ├── orchestrator/  # 워크플로우 오케스트레이션 (L3)
+│   └── api/           # FastAPI 서버 (L4)
+└── pyproject.toml
 ```
 
 ## Tech Stack

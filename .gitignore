@@ -24,3 +24,17 @@ data/
 
 # E2E 테스트 임시
 test-e2e-workflow.mjs
+
+# 런타임 출력 디렉토리
+output/
+segmentation/
+
+# 테스트 DICOM 데이터 (대용량)
+CT-dicom/
+*.dcm
+
+# 테스트 스크린샷
+test-screenshots/
+
+# pytest 캐시
+.pytest_cache/

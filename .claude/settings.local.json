@@ -21,7 +21,11 @@
       "Bash(Measure-Object -Line)",
       "Bash(python -X utf8 -c:*)",
       "Bash(npx svelte-check:*)",
-      "Bash(dir /s /b \"C:\\\\Users\\\\NS020\\\\Documents\\\\dev\\\\pysim\\\\*.dcm\")"
+      "Bash(dir /s /b \"C:\\\\Users\\\\NS020\\\\Documents\\\\dev\\\\pysim\\\\*.dcm\")",
+      "Bash(ls:*)",
+      "Bash(du:*)",
+      "Bash(git mv:*)",
+      "Bash(git rm:*)"
     ]
   }
 }
